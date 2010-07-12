@@ -16,6 +16,7 @@
 
 package com.github.mvv.smogon
 
+import scala.collection.generic.{SeqFactory, GenericTraversableTemplate}
 import scala.util.matching.Regex
 import org.bson.BSONObject
 import com.mongodb.{DBObject, BasicDBObject, DBCollection}
@@ -243,6 +244,18 @@ sealed trait Document { document =>
     final def size(n: Long) = Filter.Size[Doc, this.type](this, n)
   }
 
+  trait SeqArrayField[S[X] <: Seq[X] with GenericTraversableTemplate[X, S]]
+          extends AbstractField with ArrayFieldBase {
+    type Repr >: S[ElemRepr] <: Seq[ElemRepr]
+
+    protected def seqFactory: SeqFactory[S]
+
+    protected def newArrayRepr(): Repr = seqFactory.empty[ElemRepr]
+    protected def append(repr: Repr, value: ElemRepr): Repr =
+      seqFactory.concat(repr :+ value)
+    def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
+  }
+
   sealed trait ElementsArrayFieldBase extends ArrayFieldBase with BsonValue {
     final type ElemRepr = ValueRepr
 
@@ -280,7 +293,7 @@ sealed trait Document { document =>
                           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
                           name: String)
                         extends AbstractField(name) {
-    final type Repr = R
+    type Repr = R
 
     final def get(doc: DocRepr) = getter(doc)
     final def set(doc: DocRepr, value: R) = setter(doc, value)
@@ -560,6 +573,12 @@ sealed trait Document { document =>
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
                    name: String = null)
                  extends Field(getter, setter, name)
+                    with DocumentsArrayFieldBase
+
+  abstract class DocumentsArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)
+                 extends FieldM(getter, setter, name)
                     with DocumentsArrayFieldBase
 
   abstract class DocumentsArrayFieldD[R, C[_]](
