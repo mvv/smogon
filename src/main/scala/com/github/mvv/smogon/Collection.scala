@@ -475,6 +475,12 @@ sealed trait Document { document =>
                  extends Field(getter, setter, name)
                     with EmbeddingFieldBase
 
+  abstract class EmbeddingFieldM[R](
+                   getter: DocRepr => R, setter: (DocRepr, R) => Unit,
+                   name: String = null)
+                 extends FieldM(getter, setter, name)
+                    with EmbeddingFieldBase
+
   abstract class EmbeddingFieldD[R](name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
