@@ -34,9 +34,9 @@ sealed trait Documents extends Document {
 }
 
 sealed trait HasName {
-  val name: String
-  val rootName: String
-  val fullName: String
+  val fieldName: String
+  val fieldRootName: String
+  val fieldFullName: String
 }
 
 sealed trait Projection[C <: Collection] {
@@ -48,7 +48,7 @@ sealed trait Projection[C <: Collection] {
     val value = if (include) 1 else 0
     val bson = new BasicDBObject
     projectedFields.foreach { case (f, _) =>
-      bson.put(f.fullName, value)
+      bson.put(f.fieldFullName, value)
     }
     bson
   }
@@ -72,7 +72,7 @@ sealed trait Sort[DS <: Documents] {
   def toBson: DBObject = {
     val bson = new BasicDBObject
     sortByFields.foreach { case (f, asc, _) =>
-      bson.put(f.rootName, if (asc) 1 else -1)
+      bson.put(f.fieldRootName, if (asc) 1 else -1)
     }
     bson
   }
@@ -105,9 +105,7 @@ sealed trait Document { document =>
     final type Doc = document.type
     type Repr
 
-    final val owner = document
-
-    val index: Int
+    val fieldIndex: Int
 
     def default: Repr
 
@@ -141,8 +139,8 @@ sealed trait Document { document =>
   def field(name: String): Option[FieldBase] = fieldByName.get(name)
   def fields: Iterator[FieldBase] = fieldByIndex.iterator
 
-  sealed abstract class AbstractField(fieldName: String) extends FieldBase {
-    final val name = fieldName match {
+  sealed abstract class AbstractField(name: String) extends FieldBase {
+    final val fieldName = name match {
       case null =>
         val m = objectNamePat.matcher(getClass.getSimpleName)
         val n = if (m.matches)
@@ -152,19 +150,19 @@ sealed trait Document { document =>
         if (n == "id" && document.isInstanceOf[Collection]) "_id" else n
       case fn => fn
     }
-    final val rootName = owner match {
-      case _: Documents => name
-      case hn: HasName => hn.rootName + '.' + name
+    final val fieldRootName = document match {
+      case _: Documents => fieldName
+      case hn: HasName => hn.fieldRootName + '.' + fieldName
     }
-    final val fullName = owner match {
-      case _: Collection => name 
-      case hn: HasName => hn.fullName + '.' + name
+    final val fieldFullName = document match {
+      case _: Collection => fieldName 
+      case hn: HasName => hn.fieldFullName + '.' + fieldName
     }
-    final val index = {
-      if (fieldByName.contains(name))
+    final val fieldIndex = {
+      if (fieldByName.contains(fieldName))
         throw new IllegalArgumentException(
-                    "Field with name '" + name + "' already exists")
-      fieldByName += (name -> this)
+                    "Field with name '" + fieldName + "' already exists")
+      fieldByName += (fieldName -> this)
       fieldByIndex += this
       fieldByName.size - 1
     }
@@ -282,9 +280,9 @@ sealed trait Document { document =>
     private val fields: Array[Any] = new Array[Any](fieldByName.size)
 
     def get[F <: FieldBase](field: F): F#Repr =
-      fields(field.index).asInstanceOf[F#Repr]
+      fields(field.fieldIndex).asInstanceOf[F#Repr]
     def set[F <: FieldBase](field: F, value: F#Repr) = {
-      fields(field.index) = value
+      fields(field.fieldIndex) = value
       this.asInstanceOf[DocRepr]
     }
   }
@@ -698,7 +696,7 @@ trait Collection extends Documents {
     val dbo = new BasicDBObject
     val sort = index(this)
     sort.sortByFields.foreach { case (f, asc, _) =>
-      dbo.put(f.rootName, if (asc) 1 else -1)
+      dbo.put(f.fieldRootName, if (asc) 1 else -1)
     }
     dbc.ensureIndex(dbo, if (name == null) DBCollection.genIndexName(dbo)
                          else name, unique)

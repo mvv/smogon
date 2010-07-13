@@ -56,7 +56,7 @@ class SimpleTest extends SpecificationWithJUnit {
   }
 
   "Identity properties must have name '_id'" in {
-    MyCollection.id.name must_== "_id"
+    MyCollection.id.fieldName must_== "_id"
   }
   
   "Number of fields must be correct" in {

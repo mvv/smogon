@@ -122,7 +122,7 @@ object Filter {
     def conditionBson: AnyRef
     def toBson = {
       val bson = new BasicDBObject
-      bson.put(field.rootName, conditionBson)
+      bson.put(field.fieldRootName, conditionBson)
       bson
     }
   }
