@@ -279,18 +279,18 @@ final class Query[+C <: Collection] private(
       map(reprFromBson(_))
   def find(skip: Int = 0, limit: Int = -1)(
            implicit witness: C <:< AssociatedCollection): Iterator[C#DocRepr] =
-    findIn(witness(coll).dbCollection, skip, limit)
+    findIn(witness(coll).getDbCollection, skip, limit)
   def findOneIn(dbc: DBCollection): Option[C#DocRepr] =
     dbc.findOne(queryBson, projectionBson) match {
       case null => None
       case obj => Some(reprFromBson(obj))
     }
   def findOne()(implicit witness: C <:< AssociatedCollection): Option[C#DocRepr] =
-    findOneIn(witness(coll).dbCollection)
+    findOneIn(witness(coll).getDbCollection)
 
   def count(dbc: DBCollection): Long = dbc.count(queryBson)
   def count()(implicit witness: C <:< AssociatedCollection): Long =
-    count(witness(coll).dbCollection)
+    count(witness(coll).getDbCollection)
 
   def updateIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
@@ -299,7 +299,7 @@ final class Query[+C <: Collection] private(
         up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0)(
         implicit witness: C <:< AssociatedCollection): Long =
-    updateIn[CC](witness(coll).dbCollection, up, safety, timeout)
+    updateIn[CC](witness(coll).getDbCollection, up, safety, timeout)
   def updateOneIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0): Boolean = false
@@ -307,7 +307,7 @@ final class Query[+C <: Collection] private(
         up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0)(
         implicit witness: C <:< AssociatedCollection): Boolean =
-    updateOneIn[CC](witness(coll).dbCollection, up, safety, timeout)
+    updateOneIn[CC](witness(coll).getDbCollection, up, safety, timeout)
 
   def removeFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                  timeout: Int = 0): Long = {
@@ -319,12 +319,12 @@ final class Query[+C <: Collection] private(
   }
   def remove(safety: Safety = Safety.Default, timeout: Int = 0)(
              implicit witness: C <:< AssociatedCollection): Long =
-    removeFrom(witness(coll).dbCollection, safety, timeout)
+    removeFrom(witness(coll).getDbCollection, safety, timeout)
   def removeOneFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                     timeout: Int = 0): Boolean = false
   def removeOne(safety: Safety = Safety.Default, timeout: Int = 0)(
                 implicit witness: C <:< AssociatedCollection): Boolean =
-    removeOneFrom(witness(coll).dbCollection, safety, timeout)
+    removeOneFrom(witness(coll).getDbCollection, safety, timeout)
 
   override def toString = "Query(" + queryBson + ", " + sortBson + ", " +
                                      projectionBson + ")"

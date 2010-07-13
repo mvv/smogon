@@ -711,7 +711,8 @@ trait Collection extends Documents {
 trait DefaultReprCollection extends Collection with DefaultReprDocument
 
 trait AssociatedCollection extends Collection {
-  protected[smogon] def dbCollection: DBCollection
+  protected def dbCollection: DBCollection
+  private[smogon] def getDbCollection = dbCollection
 
   final def save(doc: DocRepr, safety: Safety = Safety.Default,
                  timeout: Int = 0): DocRepr =
