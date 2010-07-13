@@ -437,6 +437,11 @@ sealed trait Document { document =>
           implicit fromRepr: R => BsonString, toRepr: BsonString => R)
         extends BasicFieldM[BsonString, R](getter, setter, name)
 
+  class StringFieldD[R](name: String = null)(
+          implicit witness: DocRepr =:= DefaultDocRepr,
+                   fromRepr: R => BsonString, toRepr: BsonString => R)
+        extends BasicFieldD[BsonString, R](name)
+
   class OptStringField[R](
           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
           name: String = null)(
@@ -449,15 +454,44 @@ sealed trait Document { document =>
           implicit fromRepr: R => OptBsonString, toRepr: OptBsonString => R)
         extends BasicFieldM[OptBsonString, R](getter, setter, name)
 
-  class StringFieldD[R](name: String = null)(
-          implicit witness: DocRepr =:= DefaultDocRepr,
-                   fromRepr: R => BsonString, toRepr: BsonString => R)
-        extends BasicFieldD[BsonString, R](name)
-
   class OptStringFieldD[R](name: String = null)(
           implicit witness: DocRepr =:= DefaultDocRepr,
                    fromRepr: R => OptBsonString, toRepr: OptBsonString => R)
         extends BasicFieldD[OptBsonString, R](name)
+
+  class DateField[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
+          name: String = null)(
+          implicit fromRepr: R => BsonDate, toRepr: BsonDate => R)
+        extends BasicField[BsonDate, R](getter, setter, name)
+
+  class DateFieldM[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => Unit,
+          name: String = null)(
+          implicit fromRepr: R => BsonDate, toRepr: BsonDate => R)
+        extends BasicFieldM[BsonDate, R](getter, setter, name)
+
+  class DateFieldD[R](name: String = null)(
+          implicit witness: DocRepr =:= DefaultDocRepr,
+                   fromRepr: R => BsonDate, toRepr: BsonDate => R)
+        extends BasicFieldD[BsonDate, R](name)
+
+  class OptDateField[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
+          name: String = null)(
+          implicit fromRepr: R => OptBsonDate, toRepr: OptBsonDate => R)
+        extends BasicField[OptBsonDate, R](getter, setter, name)
+
+  class OptDateFieldM[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => Unit,
+          name: String = null)(
+          implicit fromRepr: R => OptBsonDate, toRepr: OptBsonDate => R)
+        extends BasicFieldM[OptBsonDate, R](getter, setter, name)
+
+  class OptDateFieldD[R](name: String = null)(
+          implicit witness: DocRepr =:= DefaultDocRepr,
+                   fromRepr: R => OptBsonDate, toRepr: OptBsonDate => R)
+        extends BasicFieldD[OptBsonDate, R](name)
 
   class IdField[R](
           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
