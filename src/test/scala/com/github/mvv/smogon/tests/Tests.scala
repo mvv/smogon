@@ -17,12 +17,12 @@
 package com.github.mvv.smogon.tests
 
 import org.specs._
-import org.bson.types.ObjectId
 import com.mongodb._
+import com.github.mvv.layson.bson._
 import com.github.mvv.smogon._
 
 class MyCollection extends DefaultReprCollection {
-  object id extends IdFieldD[ObjectId]
+  object id extends IdFieldD[BsonId]
   object field extends IntFieldD[Short]
   object opt extends OptStringFieldD[String]
   object embedded extends EmbeddingFieldDD {
@@ -68,13 +68,12 @@ class SimpleTest extends SpecificationWithJUnit {
     val my = MyCollection.create
     MyCollection.saveInto(coll, my)
     val id = MyCollection.id.get(my)
-    id must_!= null
+    id must_!= BsonId.Zero
   }
 
-  "Querying by _id must succeed" in {
+  "Querying must succeed" in {
     val coll = db.getCollection("mycoll")
-    val q = MyCollection(m => (m.id !== null) &&
-                              (m.field > -10 || m.opt === "hello"))
+    val q = MyCollection(m => m.field > -10 || m.opt === "hello")
     q.findOneIn(coll).isDefined must_== true
   }
 

@@ -17,10 +17,11 @@
 package com.github.mvv.smogon
 
 import scala.util.matching.Regex
+import com.github.mvv.layson.bson._
 import com.mongodb.{
          DBObject, BasicDBObject, BasicDBList, DBCollection, WriteResult}
 
-sealed trait ValueFilter[V <: BsonValue] {
+sealed trait ValueFilter[V <: ReprBsonValue] {
   import ValueFilter._
 
   def unary_!() = Not(this)
@@ -29,28 +30,37 @@ sealed trait ValueFilter[V <: BsonValue] {
 }
 
 object ValueFilter {
-  final case class Eq[V <: BsonValue](value: V#ValueRepr) extends ValueFilter[V]
-  final case class In[V <: BsonValue](values: Set[V#ValueRepr]) extends ValueFilter[V]
-  final case class Less[V <: BsonValue](
+  final case class Eq[V <: ReprBsonValue](value: V#ValueRepr)
+                   extends ValueFilter[V]
+  final case class In[V <: ReprBsonValue](values: Set[V#ValueRepr])
+                   extends ValueFilter[V]
+  final case class Less[V <: ReprBsonValue](
                      value: V#ValueRepr)(
-                     implicit witness: V#Bson <:< BasicBsonType) extends ValueFilter[V]
-  final case class LessOrEq[V <: BsonValue](
+                     implicit witness: V#Bson <:< OptSimpleBsonValue)
+                   extends ValueFilter[V]
+  final case class LessOrEq[V <: ReprBsonValue](
                      value: V#ValueRepr)(
-                     implicit witness: V#Bson <:< BasicBsonType) extends ValueFilter[V]
-  final case class Mod[V <: BsonValue](
+                     implicit witness: V#Bson <:< OptSimpleBsonValue)
+                   extends ValueFilter[V]
+  final case class Mod[V <: ReprBsonValue](
                      divisor: V#ValueRepr, result: V#ValueRepr)(
-                     implicit witness: V#Bson <:< IntegralBsonType) extends ValueFilter[V]
-  final case class Match[V <: BsonValue](
+                     implicit witness: V#Bson <:< OptIntegralBsonValue)
+                   extends ValueFilter[V]
+  final case class Match[V <: ReprBsonValue](
                      regex: String, flags: String)(
-                     implicit witness: V#Bson =:= BsonString) extends ValueFilter[V]
-  final case class Not[V <: BsonValue](filter: ValueFilter[V]) extends ValueFilter[V]
-  final case class And[V <: BsonValue](first: ValueFilter[V], second: ValueFilter[V])
-                     extends ValueFilter[V]
-  final case class Or[V <: BsonValue](first: ValueFilter[V], second: ValueFilter[V])
-                     extends ValueFilter[V]
+                     implicit witness: V#Bson <:< OptBsonStr)
+                   extends ValueFilter[V]
+  final case class Not[V <: ReprBsonValue](filter: ValueFilter[V])
+                   extends ValueFilter[V]
+  final case class And[V <: ReprBsonValue](
+                     first: ValueFilter[V], second: ValueFilter[V])
+                   extends ValueFilter[V]
+  final case class Or[V <: ReprBsonValue](
+                     first: ValueFilter[V], second: ValueFilter[V])
+                   extends ValueFilter[V]
 }
 
-final class ValueFilterBuilder[V <: BsonValue] {
+final class ValueFilterBuilder[V <: ReprBsonValue] {
   def ===(value: V#ValueRepr) = ValueFilter.Eq(value)
   def !==(value: V#ValueRepr) = !(this === value)
   def in(values: Set[V#ValueRepr]) = ValueFilter.In(values)
@@ -58,47 +68,47 @@ final class ValueFilterBuilder[V <: BsonValue] {
 }
 
 object ValueFilterBuilder {
-  final class BasicFilterOps[V <: BsonValue] private[ValueFilterBuilder]()(
-                implicit witness: V#Bson <:< BasicBsonType) {
+  final class BasicFilterOps[V <: ReprBsonValue] private[ValueFilterBuilder]()(
+                implicit witness: V#Bson <:< OptSimpleBsonValue) {
     def <(value: V#ValueRepr) = ValueFilter.Less[V](value)
     def <=(value: V#ValueRepr) = ValueFilter.LessOrEq[V](value)
     def >(value: V#ValueRepr) = !(this <= value)
     def >=(value: V#ValueRepr) = !(this < value)
   }
 
-  implicit def basicFilterOps[V <: BsonValue](
+  implicit def basicFilterOps[V <: ReprBsonValue](
                  b: ValueFilterBuilder[V])(
-                 implicit witness: V#Bson <:< BasicBsonType) =
+                 implicit witness: V#Bson <:< OptSimpleBsonValue) =
     new BasicFilterOps
 
-  final class ModResultFilter[V <: BsonValue] private[ValueFilterBuilder](
+  final class ModResultFilter[V <: ReprBsonValue] private[ValueFilterBuilder](
                 divisor: V#ValueRepr)(
-                implicit witness: V#Bson <:< IntegralBsonType) {
+                implicit witness: V#Bson <:< OptIntegralBsonValue) {
     def ===(result: V#ValueRepr) = ValueFilter.Mod[V](divisor, result)
     def !==(result: V#ValueRepr) = !(this === result)
   }
 
-  final class IntegralFilterOps[V <: BsonValue] private[ValueFilterBuilder]()(
-                implicit witness: V#Bson <:< IntegralBsonType) {
+  final class IntegralFilterOps[V <: ReprBsonValue] private[ValueFilterBuilder]()(
+                implicit witness: V#Bson <:< OptIntegralBsonValue) {
     def %(divisor: V#ValueRepr) = new ModResultFilter[V](divisor)
   }
 
-  implicit def integralFilterOps[V <: BsonValue](
+  implicit def integralFilterOps[V <: ReprBsonValue](
                  b: ValueFilterBuilder[V])(
-                 implicit witness: V#Bson <:< IntegralBsonType) =
+                 implicit witness: V#Bson <:< OptIntegralBsonValue) =
     new IntegralFilterOps
 
-  final class StringFilterOps[V <: BsonValue]()(
-                implicit witness: V#Bson =:= BsonString) {
+  final class StringFilterOps[V <: ReprBsonValue]()(
+                implicit witness: V#Bson <:< OptBsonStr) {
     def =~(rf: (String, String)) = ValueFilter.Match[V](rf._1, rf._2)
     def =~(regex: String) = ValueFilter.Match[V](regex, "")
     def !~(rf: (String, String)) = !(this =~ rf)
     def !~(regex: String) = !(this =~ regex)
   }
 
-  implicit def stringFilterOps[V <: BsonValue](
+  implicit def stringFilterOps[V <: ReprBsonValue](
                  b: ValueFilterBuilder[V])(
-                 implicit witness: V#Bson =:= BsonString) =
+                 implicit witness: V#Bson <:< OptBsonStr) =
     new StringFilterOps
 }
 
@@ -126,7 +136,8 @@ object Filter {
       bson
     }
   }
-  final case class Not[D <: Document, F <: D#FieldBase](filter: Simple[D, F]) extends Simple[D, F] {
+  final case class Not[D <: Document, F <: D#FieldBase](filter: Simple[D, F])
+                   extends Simple[D, F] {
     override def unary_!() = filter
     val field = filter.field
     def conditionBson = {
@@ -138,7 +149,8 @@ object Filter {
       bson
     }
   }
-  final case class And[R <: Documents](first: Filter[R], second: Filter[R]) extends Filter[R] {
+  final case class And[R <: Documents](first: Filter[R], second: Filter[R])
+                   extends Filter[R] {
     def unary_!() = Or(!first, !second)
     override def linearize: Iterator[Filter[R]] = (first, second) match {
       case (f @ And(_, _), s @ And(_, _)) => f.linearize ++ s.linearize
@@ -153,7 +165,8 @@ object Filter {
       bson
     }
   }
-  final case class Or[R <: Documents](first: Filter[R], second: Filter[R]) extends Filter[R] {
+  final case class Or[R <: Documents](first: Filter[R], second: Filter[R])
+                   extends Filter[R] {
     def unary_!() = And(!first, !second)
     override def linearize: Iterator[Filter[R]] = (first, second) match {
       case (f @ Or(_, _), s @ Or(_, _)) => f.linearize ++ s.linearize
@@ -182,51 +195,56 @@ object Filter {
   }
   final case class Eq[D <: Document, F <: D#BasicFieldBase](
                       field: F, value: F#Repr) extends Simple[D, F] {
-    def conditionBson = field.toBson(value.asInstanceOf[field.Repr]).toBson
+    def conditionBson = Bson.toRaw(field.toBson(value.asInstanceOf[field.Repr]))
   }
   final case class In[D <: Document, F <: D#BasicFieldBase](
                       field: F, values: Set[F#Repr]) extends Simple[D, F] {
     def conditionBson = {
       val bson = new BasicDBObject
       val list = new BasicDBList
-      values.foreach(v => list.add(field.toBson(v.asInstanceOf[field.Repr]).toBson))
+      values.foreach(v =>
+        list.add(Bson.toRaw(field.toBson(v.asInstanceOf[field.Repr]))))
       bson.put("$in", list)
       bson
     }
   }
   final case class Less[D <: Document, F <: D#BasicFieldBase](
                      field: F, value: F#Repr)(
-                     implicit witness: F#Bson <:< BasicBsonType) extends Simple[D, F] {
+                     implicit witness: F#Bson <:< OptSimpleBsonValue)
+                   extends Simple[D, F] {
     def conditionBson = {
       val bson = new BasicDBObject
-      bson.put("$lt", field.toBson(value.asInstanceOf[field.Repr]).toBson)
+      bson.put("$lt", Bson.toRaw(field.toBson(value.asInstanceOf[field.Repr])))
       bson
     }
   }
   final case class LessOrEq[D <: Document, F <: D#BasicFieldBase](
                      field: F, value: F#Repr)(
-                     implicit witness: F#Bson <:< BasicBsonType) extends Simple[D, F] {
+                     implicit witness: F#Bson <:< OptSimpleBsonValue)
+                   extends Simple[D, F] {
     def conditionBson = {
       val bson = new BasicDBObject
-      bson.put("$lte", field.toBson(value.asInstanceOf[field.Repr]).toBson)
+      bson.put("$lte", Bson.toRaw(field.toBson(value.asInstanceOf[field.Repr])))
       bson
     }
   }
   final case class Mod[D <: Document, F <: D#BasicFieldBase](
                      field: F, divisor: F#Repr, result: F#Repr)(
-                     implicit witness: F#Bson <:< IntegralBsonType) extends Simple[D, F] {
+                     implicit witness: F#Bson <:< OptIntegralBsonValue)
+                   extends Simple[D, F] {
     def conditionBson = {
       val bson = new BasicDBObject
       val args = new BasicDBList
-      args.add(field.toBson(divisor.asInstanceOf[field.Repr]).toBson)
-      args.add(field.toBson(result.asInstanceOf[field.Repr]).toBson)
+      args.add(Bson.toRaw(field.toBson(divisor.asInstanceOf[field.Repr])))
+      args.add(Bson.toRaw(field.toBson(result.asInstanceOf[field.Repr])))
       bson.put("$mod", args)
       bson
     }
   }
   final case class Match[D <: Document, F <: D#BasicFieldBase](
                      field: F, regex: Regex)(
-                     implicit witness: F#Bson =:= BsonString) extends Simple[D, F] {
+                     implicit witness: F#Bson <:< OptBsonStr)
+                   extends Simple[D, F] {
     def conditionBson = regex.pattern
   }
   final case class Size[D <: Document, F <: D#ArrayFieldBase](

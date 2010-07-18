@@ -18,12 +18,15 @@ package com.github.mvv.smogon
 
 import scala.collection.generic.{SeqFactory, GenericTraversableTemplate}
 import scala.util.matching.Regex
+import com.github.mvv.layson
+import layson.bson._
+import layson.json._
 import org.bson.BSONObject
 import com.mongodb.{DBObject, BasicDBObject, DBCollection}
 
-trait BsonValue {
+trait ReprBsonValue {
   type ValueRepr
-  type Bson <: BsonType
+  type Bson <: BsonValue
 
   def fromBson(bson: Bson): ValueRepr
   def toBson(repr: ValueRepr): Bson
@@ -88,8 +91,407 @@ object Sort {
                                       }]) extends Sort[DS]
 }
 
+sealed trait Direction
+sealed trait In extends Direction
+sealed trait Out extends Direction
+sealed trait InOut extends In with Out
+
+sealed trait JsonSpec[D <: Document, +IO <: Direction] {
+  def jsonDocument: D
+  def jsonMembers: Iterator[JsonSpec.Single[D, IO]] 
+}
+
+object JsonSpec {
+  sealed trait Verdict
+  object Ignore extends Verdict
+  object Raise extends Verdict
+
+  sealed class ReadingException(message: String, cause: Throwable)
+                 extends RuntimeException(message, cause) {
+    def this(message: String) = this(message, null)
+  }
+  case class UnexpectedFieldException(name: String)
+             extends ReadingException("Unexpected field '" + name + "'")
+  case class MissingFieldException(name: String)
+             extends ReadingException("Mandatory field '" + name +
+                                      "' is missing")
+  case class IllegalFieldValueException(name: String, value: JsonValue,
+                                        cause: Throwable)
+        extends ReadingException(
+                  "Field '" + name + "' has illegal value '" +
+                  value.serialize.mkString + "'") {
+    def this(name: String, value: JsonValue) = this(name, value, null)
+  }
+
+  final class Reader[D <: Document](spec: JsonSpec[D, In])
+              extends (JsonObject => D#DocRepr) {
+    private def process[DD <: Document](
+                 path: Seq[String], jo: JsonObject, spec: JsonSpec[DD, In],
+                 repr: DD#DocRepr): DD#DocRepr = {
+      val d = spec.jsonDocument
+      var doc = repr.asInstanceOf[d.DocRepr]
+
+      def basicField[F <: DDD#BasicFieldBase forSome { type DDD <: Document }](
+            field: F, name: String, value: JsonValue) {
+        val f = field.asInstanceOf[d.BasicFieldBase]
+        val r = try {
+                  f.fromBson(Bson.fromJson(value, f.bsonClass))
+                } catch {
+                  case e: Exception =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value, e)
+                }
+        doc = f.set(doc, r)
+      }
+      def embeddingFieldWith[F <: DD#EmbeddingFieldBase](
+            field: F, name: String, obj: JsonObject, spec: JsonSpec[F, In]) {
+        val f = field.asInstanceOf[d.EmbeddingFieldBase]
+        doc = f.set(doc, process[f.type](
+                           path :+ name, obj,
+                           spec.asInstanceOf[JsonSpec[f.type, In]]))
+      }
+      def embeddingField[F <: DDD#EmbeddingFieldBase
+                                forSome { type DDD <: Document }](
+            field: F, name: String, obj: JsonObject) {
+        val f = field.asInstanceOf[d.EmbeddingFieldBase]
+        val spec = Many[f.type, In](f.fields.toSeq)
+        doc = f.set(doc, process[f.type](path :+ name, obj, spec))
+      }
+      def optEmbeddingField[F <: DDD#OptEmbeddingFieldBase
+                                   forSome { type DDD <: Document }](
+            field: F, name: String) {
+        val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
+        doc = f.set(doc, f.nullDocRepr)
+      }
+      def customEmbedding(
+            name: String, obj: JsonObject, spec: NoDefault[DD, In]) {
+        doc = process[d.type](
+                path :+ name, obj,
+                spec.asInstanceOf[NoDefault[d.type, In]], doc)
+      }
+
+      val hl = spec.asInstanceOf[HasLookup[DD, In]]
+      var seen = Set[String]()
+      jo.iterator.foreach { case (name, value) =>
+        hl.jsonMemberSpec(name) match {
+          case Right(s) =>
+            seen += name
+            s match {
+              case DocumentField(_, BasicField(field)) =>
+                basicField(field, name, value)
+              case DocumentField(_, EmbeddingField(field)) =>
+                (value, field) match {
+                  case (obj: JsonObject, field) =>
+                    embeddingField(field, name, obj)
+                  case (JsonNull, OptEmbeddingField(field)) =>
+                    optEmbeddingField(field, name)
+                  case _ =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value)
+                }
+              case InEmbedding(_, field, spec) =>
+                (value, field) match {
+                  case (obj: JsonObject, field) =>
+                    embeddingFieldWith(field, name, obj, spec)
+                  case (JsonNull, OptEmbeddingField(field)) =>
+                    optEmbeddingField(field, name)
+                  case _ =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value)
+                }
+              case InCustomEmbedding(_, spec) =>
+                value match {
+                  case obj: JsonObject =>
+                    customEmbedding(name, obj, spec)
+                  case _ =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value)
+                }
+            }
+          case Left(Raise) =>
+            throw new UnexpectedFieldException((path :+ name).mkString("."))
+          case Left(Ignore) =>
+        }
+      }
+      hl.jsonMembers.foreach { single =>
+        if (!seen.contains(single.jsonMember))
+          throw new MissingFieldException(
+                      (path :+ single.jsonMember).mkString("."))
+      }
+      doc
+    }
+
+    private def process[DD <: Document](
+                 path: Seq[String],
+                 jo: JsonObject, spec: JsonSpec[DD, In]): DD#DocRepr = {
+      var doc = spec.jsonDocument.create
+      process(path, jo, spec, doc)
+    }
+
+    def apply(jo: JsonObject): D#DocRepr = process(Seq.empty, jo, spec)
+  }
+
+  final class Writer[D <: Document](spec: JsonSpec[D, Out])
+              extends (D#DocRepr => JsonObject) {
+    def apply(jo: D#DocRepr): JsonObject =
+      throw new UnsupportedOperationException
+  }
+
+  sealed trait HasLookup[D <: Document, +IO <: Direction]
+               extends JsonSpec[D, IO] {
+    def jsonMemberSpec(name: String): Either[Verdict, Single[D, IO]]
+  }
+
+  final case class IgnoreRestIn[D <: Document](spec: NoDefault[D, In])
+                   extends HasLookup[D, In] {
+    def jsonDocument = spec.jsonDocument 
+    def jsonMemberSpec(name: String) = spec.jsonMemberSpec(name) match {
+      case Left(Raise) => Left(Ignore)
+      case v => v
+    }
+    def jsonMembers = spec.jsonMembers
+  }
+  final case class RestIn[D <: Document](
+                     notFields: Set[D#FieldBase],
+                     ignoreUnknown: Boolean,
+                     spec: NoDefault[D, In]) extends HasLookup[D, In] {
+    def jsonDocument = spec.jsonDocument 
+    def jsonMemberSpec(name: String) = spec.jsonMemberSpec(name) match {
+      case Left(Raise) => jsonDocument.field(name) match {
+        case Some(field) =>
+          if (spec.jsonFields.contains(field) || notFields.contains(field))
+            Left(Raise)
+          else
+            Right(field.asInstanceOf[Single[D, In]])
+        case None =>
+          if (ignoreUnknown)
+            Left(Ignore)
+          else
+            Left(Raise)
+      }
+      case v => v
+    }
+    def jsonMembers = spec.jsonMembers ++ {
+      jsonDocument.fields.filter { field =>
+        !spec.jsonFields.contains(field) && !notFields.contains(field)
+      } .asInstanceOf[Iterator[Single[D, In]]]
+    }
+  }
+  final class RestOut[D <: Document](
+                notFields: Set[D#FieldBase],
+                spec: NoDefault[D, Out]) extends JsonSpec[D, Out] {
+    def jsonDocument = spec.jsonDocument 
+    def jsonMembers = spec.jsonMembers ++ {
+      jsonDocument.fields.filter { field =>
+        !spec.jsonFields.contains(field) && !notFields.contains(field)
+      } .asInstanceOf[Iterator[Single[D, Out]]]
+    }
+  }
+
+  sealed trait NoDefault[D <: Document, +IO <: Direction]
+               extends HasLookup[D, IO] {
+    def jsonFields: Set[D#FieldBase]
+    def jsonMembersMap: Map[String, Single[D, IO]]
+
+    def jsonMemberSpec(name: String) = jsonMembersMap.get(name) match {
+      case Some(spec) => Right(spec)
+      case None => Left(Raise)
+    }
+    def jsonMembers = jsonMembersMap.valuesIterator
+
+    def >>(spec: NoDefault[D, Out])(
+           implicit witness: IO <:< Out): NoDefault[D, Out]
+    def <<(spec: NoDefault[D, In])(
+           implicit witness: IO <:< In): NoDefault[D, In]
+    def >>!(notFields: D => Seq[_ <: D#FieldBase])(
+            implicit witness: IO <:< Out) =
+      new RestOut(notFields(jsonDocument).toSet[D#FieldBase],
+                  this.asInstanceOf[NoDefault[D, Out]])
+    def >>*()(implicit witness: IO <:< Out) = this >>! (d => Nil)
+    def <<!(notFields: D => Seq[_ <: D#FieldBase],
+            ignoreUnknown: Boolean = false)(
+            implicit witness: IO <:< In) =
+      new RestIn(notFields(jsonDocument).toSet[D#FieldBase],
+                 ignoreUnknown, this.asInstanceOf[NoDefault[D, In]])
+    def <<*(ignoreUnknown: Boolean = false)(implicit witness: IO <:< In) =
+      this <<! (d => Nil, ignoreUnknown)
+    def <<#()(implicit witness: IO <:< In) =
+      new IgnoreRestIn[D](this.asInstanceOf[NoDefault[D, In]])
+  }
+  object NoDefault {
+    def unapply[D <: Document, IO <: Direction](
+          spec: NoDefault[D, IO]): Option[NoDefault[D, IO]] = Some(spec)
+  }
+  sealed trait Single[D <: Document, +IO <: Direction]
+               extends NoDefault[D, IO] {
+    def jsonMember: String
+    def jsonMembersMap = Map(jsonMember -> this)
+
+    def >>(spec: NoDefault[D, Out])(
+           implicit witness: IO <:< Out): NoDefault[D, Out] = spec match {
+      case Many(specs) =>
+        Many[D, Out](this.asInstanceOf[Single[D, Out]] +: specs)
+      case spec =>
+        Many(Seq(this.asInstanceOf[Single[D, Out]],
+                 spec.asInstanceOf[Single[D, Out]]))
+    }
+    def <<(spec: NoDefault[D, In])(
+           implicit witness: IO <:< In): NoDefault[D, In] = spec match {
+      case Many(specs) =>
+        Many[D, In](this.asInstanceOf[Single[D, In]] +: specs)
+      case spec =>
+        Many(Seq(this.asInstanceOf[Single[D, In]],
+                 spec.asInstanceOf[Single[D, In]]))
+    }
+  }
+  object Single {
+    def unapply[D <: Document, IO <: Direction](
+          spec: Single[D, IO]): Option[Single[D, IO]] = Some(spec)
+  }
+  final case class Many[D <: Document, IO <: Direction](
+                     specs: Seq[Single[D, IO]])
+                   extends NoDefault[D, IO] {
+    def jsonDocument = specs(0).jsonDocument
+    lazy val jsonFields = specs.map(_.jsonFields).reduceLeft(_ ++ _)
+    lazy val jsonMembersMap = specs.map(_.jsonMembersMap).reduceLeft(_ ++ _)
+
+    def >>(spec: NoDefault[D, Out])(implicit witness: IO <:< Out) = spec match {
+      case Many(ss) =>
+        Many[D, Out](specs.asInstanceOf[Seq[Single[D, Out]]] ++ ss)
+      case spec =>
+        Many(specs.asInstanceOf[Seq[Single[D, Out]]] :+
+             spec.asInstanceOf[Single[D, Out]])
+    }
+    def <<(spec: NoDefault[D, In])(implicit witness: IO <:< In) = spec match {
+      case Many(ss) =>
+        Many[D, In](specs.asInstanceOf[Seq[Single[D, In]]] ++ ss)
+      case spec =>
+        Many(specs.asInstanceOf[Seq[Single[D, In]]] :+
+             spec.asInstanceOf[Single[D, In]])
+    }
+  }
+
+  final class OptMember[D <: Document](
+                spec: Member[D, In], alt: D#DocRepr => D#DocRepr)
+              extends Single[D, In] {
+    def jsonDocument = spec.jsonDocument
+    def jsonMember = spec.jsonMember
+    def jsonFields = spec.jsonFields
+  }
+  sealed trait Member[D <: Document, +IO <: Direction] extends Single[D, IO] {
+    def jsonFields = Set[D#FieldBase]()
+
+    def orElse(alt: D#DocRepr => D#DocRepr)(
+               implicit witness: IO <:< In): OptMember[D] =
+      new OptMember[D](this.asInstanceOf[Member[D, In]], alt)
+    def ?()(implicit witness: IO <:< In): OptMember[D] = this orElse (d => d)
+  }
+  sealed trait Field[D <: Document, +IO <: Direction] extends Member[D, IO] {
+    def jsonField: D#FieldBase
+    def jsonDocument = jsonField.fieldDocument
+    override def jsonFields = Set(jsonField)
+    def jsonMember = jsonField.fieldName
+  }
+
+  final case class Renamed[D <: Document, F <: D#FieldBase](
+                     name: String, field: F)
+                   extends Field[D, InOut] {
+    def jsonField: F = field
+    override def jsonMember = name
+
+    def toOpt(conv: F#Repr => Option[JsonValue]) =
+      ConvTo[D, F](name, field, conv)
+    def to(conv: F#Repr => JsonValue) = toOpt(r => Some(conv(r)))
+    def from(conv: PartialFunction[JsonValue, F#Repr]) =
+      ConvFrom[D, F](name, field, conv)
+    def enter[IO <: Direction](
+          spec: F => JsonSpec[d.type, IO] forSome { val d: F })(
+          implicit witness: F <:< D#EmbeddingFieldBase): Field[D, IO] = {
+      val embed = witness(field)
+      new InEmbedding[D, embed.type, IO](
+            name, embed, spec(field).asInstanceOf[JsonSpec[embed.type, IO]])
+    }
+  }
+  object DocumentField {
+    def unapply[D <: Document, IO <: Direction](
+          spec: Single[D, IO]): Option[(String, D#FieldBase)] = {
+      def cast[DD <: Document](field: DD#FieldBase): D#FieldBase =
+        field.asInstanceOf[D#FieldBase]
+      spec match {
+        case Field(field) => Some((field.fieldName, cast(field)))
+        case Renamed(name, field) => Some((name, cast(field)))
+        case _ => None
+      }
+    }
+  }
+  final case class ConvTo[D <: Document, F <: D#FieldBase](
+                     name: String, field: F, conv: F#Repr => Option[JsonValue])
+                   extends Field[D, Out] {
+    def jsonField: F = field
+    override def jsonMember = name
+  }
+  final case class ConvFrom[D <: Document, F <: D#FieldBase](
+                     name: String, field: F,
+                     conv: PartialFunction[JsonValue, F#Repr])
+                   extends Field[D, In] {
+    def jsonField: F = field
+    override def jsonMember = name
+  }
+  final case class InCustomEmbedding[D <: Document, IO <: Direction](
+                     name: String, spec: NoDefault[D, IO])
+                   extends Member[D, IO] {
+    def jsonDocument = spec.jsonDocument
+    def jsonMember = name
+    override def jsonFields = spec.jsonFields
+  }
+  final case class CustomFieldFrom[D <: Document](
+                     name: String, val jsonDocument: D,
+                     conv: PartialFunction[(D#DocRepr, JsonValue), D#DocRepr])
+                   extends Member[D, In] {
+    def jsonMember = name
+  }
+  final case class CustomFieldTo[D <: Document](
+                     name: String, val jsonDocument: D,
+                     conv: D#DocRepr => Option[JsonValue])
+                   extends Member[D, Out] {
+    def jsonMember = name
+  }
+  final case class InEmbedding[D <: Document, F <: D#EmbeddingFieldBase,
+                               IO <: Direction](
+                     name: String, field: F, spec: JsonSpec[F, IO])
+                   extends Field[D, IO] {
+    def jsonField: F = field 
+    override def jsonMember = name
+  }
+  final case class Lifted[D <: Document, F <: D#EmbeddingFieldBase,
+                          IO <: Direction](spec: Single[F, IO])
+                   extends Member[D, IO] {
+    def jsonDocument = spec.jsonDocument.jsonDocument
+    def jsonMember = spec.jsonMember
+  }
+}
+
 object Document {
   val objectNamePat = ".*\\$([a-zA-Z_][a-zA-Z0-9_]*)\\$".r.pattern
+}
+
+object Field {
+  def unapply[D <: Document](x: D#FieldBase): Option[D#FieldBase] =
+    Some(x)
+}
+object BasicField {
+  def unapply[D <: Document](x: D#BasicFieldBase): Option[D#BasicFieldBase] =
+    Some(x)
+}
+object EmbeddingField {
+  def unapply[D <: Document](
+        x: D#EmbeddingFieldBase): Option[D#EmbeddingFieldBase] =
+    Some(x)
+}
+object OptEmbeddingField {
+  def unapply[D <: Document](
+        x: D#OptEmbeddingFieldBase): Option[D#OptEmbeddingFieldBase] =
+    Some(x)
 }
 
 sealed trait Document { document =>
@@ -101,11 +503,13 @@ sealed trait Document { document =>
 
   sealed trait FieldBase extends HasName
                             with Projection[Coll]
-                            with Sort[Root] { field =>
+                            with Sort[Root]
+                            with JsonSpec.Field[document.type, InOut] { field =>
     final type Doc = document.type
     type Repr
 
     val fieldIndex: Int
+    def fieldDocument: Doc = document
 
     def default: Repr
 
@@ -129,6 +533,14 @@ sealed trait Document { document =>
         case (f, _, w) => (f, false, w)
       }
     }
+
+    final def jsonField: this.type = this
+    final def as(name: String) = JsonSpec.Renamed[Doc, this.type](name, this)
+    final def toOpt(conv: Repr => Option[JsonValue]) =
+      JsonSpec.ConvTo[Doc, this.type](fieldName, this, conv)
+    final def to(conv: Repr => JsonValue) = toOpt(r => Some(conv(r)))
+    final def from(conv: PartialFunction[JsonValue, Repr]) =
+      JsonSpec.ConvFrom[Doc, this.type](fieldName, this, conv)
   }
 
   private val fieldByName: scala.collection.mutable.Map[String, FieldBase] =
@@ -168,7 +580,7 @@ sealed trait Document { document =>
     }
   }
 
-  sealed trait BasicFieldBase extends FieldBase with BsonValue {
+  sealed trait BasicFieldBase extends FieldBase with ReprBsonValue {
     final type ValueRepr = Repr
 
     val bsonClass: Class[Bson]
@@ -181,7 +593,7 @@ sealed trait Document { document =>
 
   object BasicFieldBase {
     final class BasicFieldOps[F <: BasicFieldBase] private[BasicFieldBase](
-                  field: F)(implicit witness: F#Bson <:< BasicBsonType) {
+                  field: F)(implicit witness: F#Bson <:< OptSimpleBsonValue) {
       def <(value: F#Repr) = Filter.Less[F#Doc, F](field, value)
       def <=(value: F#Repr) = Filter.LessOrEq[F#Doc, F](field, value)
       def >(value: F#Repr) = !(this <= value)
@@ -190,35 +602,36 @@ sealed trait Document { document =>
 
     implicit def basicFieldOps[F <: BasicFieldBase](
                    field: F)(
-                   implicit witness: F#Bson <:< BasicBsonType) =
+                   implicit witness: F#Bson <:< OptSimpleBsonValue) =
       new BasicFieldOps(field)
 
     final class ModResultFilter[F <: BasicFieldBase] private[BasicFieldBase](
                   field: F, devisor: F#Repr)(
-                  implicit witness: F#Bson <:< IntegralBsonType) {
+                  implicit witness: F#Bson <:< OptIntegralBsonValue) {
       def ===(result: F#Repr) = Filter.Mod[F#Doc, F](field, devisor, result)
       def !==(result: F#Repr) = !(this === result)
     }
 
     final class IntegralFieldOps[F <: BasicFieldBase] private[BasicFieldBase](
-                  field: F)(implicit witness: F#Bson <:< IntegralBsonType) {
+                  field: F)(
+                  implicit witness: F#Bson <:< OptIntegralBsonValue) {
       def %(devisor: F#Repr) = new ModResultFilter(field, devisor)
     }
 
     implicit def integralFieldOps[F <: BasicFieldBase](
                    field: F)(
-                   implicit witness: F#Bson <:< IntegralBsonType) =
+                   implicit witness: F#Bson <:< OptIntegralBsonValue) =
       new IntegralFieldOps(field)
 
     final class StringFieldOps[F <: BasicFieldBase] private[BasicFieldBase](
-                  field: F)(implicit witness: F#Bson =:= BsonString) {
+                  field: F)(implicit witness: F#Bson <:< OptBsonStr) {
       def =~(regex: Regex) = Filter.Match[F#Doc, F](field, regex)
       def !~(regex: Regex) = !(this =~ regex)
     }
 
     implicit def stringFieldOps[F <: BasicFieldBase](
                    field: F)(
-                   implicit witness: F#Bson =:= BsonString) =
+                   implicit witness: F#Bson <:< OptBsonStr) =
       new StringFieldOps(field)
   }
 
@@ -227,7 +640,31 @@ sealed trait Document { document =>
     final type Root = document.Root
     final type DocRepr = Repr
 
-    final def default = create
+    def default = create
+
+    def enter[IO <: Direction](
+          spec: this.type => JsonSpec[d.type, IO]
+                               forSome { val d: this.type }) =
+      new JsonSpec.InEmbedding[Doc, this.type, IO](
+            jsonMember, this, spec(this).asInstanceOf[JsonSpec[this.type, IO]])
+    def open[IO <: Direction](
+          spec: this.type =>
+                JsonSpec.NoDefault[d.type, IO]
+                  forSome { val d: this.type }) = spec(this) match {
+      case JsonSpec.Many(ss) =>
+        JsonSpec.Many(
+          ss.map(s =>
+            new JsonSpec.Lifted[Doc, this.type, IO](
+                  s.asInstanceOf[JsonSpec.Single[this.type, IO]])))
+      case s =>
+        new JsonSpec.Lifted[Doc, this.type, IO](
+              s.asInstanceOf[JsonSpec.Single[this.type, IO]])
+    }
+  }
+
+  sealed trait OptEmbeddingFieldBase extends EmbeddingFieldBase {
+    protected def nullDocRepr: DocRepr
+    final override def default = nullDocRepr
   }
 
   sealed trait ArrayFieldBase extends FieldBase {
@@ -254,10 +691,11 @@ sealed trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
   }
 
-  sealed trait ElementsArrayFieldBase extends ArrayFieldBase with BsonValue {
+  sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
     final type ElemRepr = ValueRepr
 
-    final def contains(filter: ValueFilterBuilder[this.type] => ValueFilter[this.type]) =
+    final def contains(filter: ValueFilterBuilder[this.type] =>
+                               ValueFilter[this.type]) =
       Filter.ContainsElem[Doc, this.type](
         this, filter(new ValueFilterBuilder[this.type]))
   }
@@ -266,7 +704,8 @@ sealed trait Document { document =>
     final type Coll = document.Coll
     final type ElemRepr = DocRepr
 
-    final def contains(filter: this.type => Filter[this.type]): Filter[Doc#Root] =
+    final def contains(filter: this.type =>
+                               Filter[this.type]): Filter[Doc#Root] =
       Filter.Contains[Doc, this.type](this, filter(this))
   }
 
@@ -308,14 +747,15 @@ sealed trait Document { document =>
                           implicit witness: DocRepr =:= DefaultDocRepr)
                         extends AbstractField(name) { field =>
     final def get(doc: DocRepr) = witness(doc).get[field.type](field)
-    final def set(doc: DocRepr, value: Repr) = witness(doc).set[field.type](field, value)
+    final def set(doc: DocRepr, value: Repr) =
+      witness(doc).set[field.type](field, value)
   }
 
   abstract class AbstractBasicField(name: String)
                    extends AbstractField(name)
                       with BasicFieldBase
 
-  abstract class BasicField[B <: BsonType, R] private[Document](
+  abstract class BasicField[B <: BsonValue, R] private[Document](
                    getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
                    name: String = null)(
                    implicit fromRepr: R => B, toRepr: B => R,
@@ -328,10 +768,10 @@ sealed trait Document { document =>
     final def fromBson(bson: B): R = toRepr(bson)
     final def toBson(repr: R): B = fromRepr(repr)
 
-    def default = fromBson(BsonType.default[B])
+    def default = fromBson(Bson.default[B])
   }
 
-  abstract class BasicFieldM[B <: BsonType, R] private[Document](
+  abstract class BasicFieldM[B <: BsonValue, R] private[Document](
                    getter: DocRepr => R, setter: (DocRepr, R) => Unit,
                    name: String = null)(
                    implicit fromRepr: R => B, toRepr: B => R,
@@ -339,7 +779,7 @@ sealed trait Document { document =>
                  extends BasicField[B, R](getter, (d, r) => { setter(d, r); d },
                                           name)
 
-  abstract class BasicFieldD[B <: BsonType, R](
+  abstract class BasicFieldD[B <: BsonValue, R](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr,
                             fromRepr: R => B, toRepr: B => R,
@@ -353,7 +793,7 @@ sealed trait Document { document =>
     final def fromBson(bson: B): R = toRepr(bson)
     final def toBson(repr: R): B = fromRepr(repr)
 
-    def default = fromBson(BsonType.default[B])
+    def default = fromBson(Bson.default[B])
   }
 
   class BoolField[R](
@@ -428,36 +868,36 @@ sealed trait Document { document =>
   class StringField[R](
           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
           name: String = null)(
-          implicit fromRepr: R => BsonString, toRepr: BsonString => R)
-        extends BasicField[BsonString, R](getter, setter, name)
+          implicit fromRepr: R => BsonStr, toRepr: BsonStr => R)
+        extends BasicField[BsonStr, R](getter, setter, name)
 
   class StringFieldM[R](
           getter: DocRepr => R, setter: (DocRepr, R) => Unit,
           name: String = null)(
-          implicit fromRepr: R => BsonString, toRepr: BsonString => R)
-        extends BasicFieldM[BsonString, R](getter, setter, name)
+          implicit fromRepr: R => BsonStr, toRepr: BsonStr => R)
+        extends BasicFieldM[BsonStr, R](getter, setter, name)
 
   class StringFieldD[R](name: String = null)(
           implicit witness: DocRepr =:= DefaultDocRepr,
-                   fromRepr: R => BsonString, toRepr: BsonString => R)
-        extends BasicFieldD[BsonString, R](name)
+                   fromRepr: R => BsonStr, toRepr: BsonStr => R)
+        extends BasicFieldD[BsonStr, R](name)
 
   class OptStringField[R](
           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
           name: String = null)(
-          implicit fromRepr: R => OptBsonString, toRepr: OptBsonString => R)
-        extends BasicField[OptBsonString, R](getter, setter, name)
+          implicit fromRepr: R => OptBsonStr, toRepr: OptBsonStr => R)
+        extends BasicField[OptBsonStr, R](getter, setter, name)
 
   class OptStringFieldM[R](
           getter: DocRepr => R, setter: (DocRepr, R) => Unit,
           name: String = null)(
-          implicit fromRepr: R => OptBsonString, toRepr: OptBsonString => R)
-        extends BasicFieldM[OptBsonString, R](getter, setter, name)
+          implicit fromRepr: R => OptBsonStr, toRepr: OptBsonStr => R)
+        extends BasicFieldM[OptBsonStr, R](getter, setter, name)
 
   class OptStringFieldD[R](name: String = null)(
           implicit witness: DocRepr =:= DefaultDocRepr,
-                   fromRepr: R => OptBsonString, toRepr: OptBsonString => R)
-        extends BasicFieldD[OptBsonString, R](name)
+                   fromRepr: R => OptBsonStr, toRepr: OptBsonStr => R)
+        extends BasicFieldD[OptBsonStr, R](name)
 
   class DateField[R](
           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
@@ -542,11 +982,40 @@ sealed trait Document { document =>
     final protected def newDocRepr() = new DefaultDocRepr
   }
 
+  abstract class OptEmbeddingField[R](
+                   getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
+                   name: String = null)
+                 extends Field(getter, setter, name)
+                    with OptEmbeddingFieldBase
+
+  abstract class OptEmbeddingFieldM[R](
+                   getter: DocRepr => R, setter: (DocRepr, R) => Unit,
+                   name: String = null)
+                 extends FieldM(getter, setter, name)
+                    with OptEmbeddingFieldBase
+
+  abstract class OptEmbeddingFieldD[R](name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with OptEmbeddingFieldBase {
+    final type Repr = R
+  }
+
+  abstract class OptEmbeddingFieldDD(
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with OptEmbeddingFieldBase {
+    final type Repr = DefaultDocRepr
+    final protected def newDocRepr() = new DefaultDocRepr
+    protected final def nullDocRepr = null
+  }
+
   abstract class AbstractElementsArrayField(fieldName: String = null)
                    extends AbstractField(fieldName)
                       with ElementsArrayFieldBase
 
-  abstract class ElementsArrayField[B <: BsonType, R, C[X]](
+  abstract class ElementsArrayField[B <: BsonValue, R, C[X]](
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
                    fieldName: String = null)(
                    implicit fromRepr: R => B, toRepr: B => R)
@@ -559,7 +1028,7 @@ sealed trait Document { document =>
     final def toBson(repr: R): B = fromRepr(repr)
   }
 
-  abstract class ElementsArrayFieldD[B <: BsonType, R, C[_]](
+  abstract class ElementsArrayFieldD[B <: BsonValue, R, C[_]](
                    fieldName: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr,
                             fromRepr: R => B, toRepr: B => R)
@@ -577,7 +1046,8 @@ sealed trait Document { document =>
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
                    name: String = null)(
                    implicit fromRepr: R => BsonBool, toRepr: BsonBool => R)
-                 extends ElementsArrayField[BsonBool, R, C](getter, setter, name)
+                 extends ElementsArrayField[BsonBool, R, C](
+                           getter, setter, name)
 
   abstract class BoolArrayFieldD[R, C[_]](
                    name: String = null)(
@@ -631,20 +1101,28 @@ sealed trait Document { document =>
     final type Repr = C[DocRepr] 
   }
 
-  final class DocObject private[smogon](private var doc: DocRepr) extends DBObject {
+  final class DocObject private[smogon](
+                private var doc: DocRepr) extends DBObject {
     import scala.collection.JavaConversions._
 
     def repr = doc
     def get(key: String): AnyRef = fieldByName.get(key) match {
       case Some(field) => field match {
         case field: BasicFieldBase =>
-          field.toBson(field.get(doc)).toBson
+          val bson = field.toBson(field.get(doc))
+          if (key == "_id" && field.bsonClass == classOf[BsonId] &&
+              bson == BsonId.Zero && document.isInstanceOf[Collection])
+            null
+          else
+            Bson.toRaw(bson)
         case field: EmbeddingFieldBase =>
           field.dbObject(field.get(doc))
         case field: ElementsArrayFieldBase =>
-          asIterable(field.iterator(field.get(doc)).map(field.toBson(_).toBson).toIterable)
+          asIterable(
+            field.iterator(field.get(doc)).map(field.toBson(_)).toIterable)
         case field: DocumentsArrayFieldBase =>
-          asIterable(field.iterator(field.get(doc)).map(field.dbObject).toIterable)
+          asIterable(
+            field.iterator(field.get(doc)).map(field.dbObject).toIterable)
       }
       case None =>
         if (key == "_transientFields")
@@ -655,7 +1133,7 @@ sealed trait Document { document =>
     def put(key: String, value: AnyRef): AnyRef = fieldByName.get(key) match {
       case Some(field) => field match {
           case field: BasicFieldBase =>
-            doc = field.set(doc, field.fromBson(BsonType.fromRaw(value).
+            doc = field.set(doc, field.fromBson(Bson.fromRaw(value).
                                    asInstanceOf[field.Bson]))
           case field: EmbeddingFieldBase =>
             val dbo = field.dbObject(field.create)
@@ -681,6 +1159,23 @@ sealed trait Document { document =>
   }
 
   final def dbObject(doc: DocRepr) = new DocObject(doc)
+
+  def enter[IO <: Direction](
+        name: String)(
+        spec: JsonSpec.NoDefault[d.type, IO] forSome { val d: this.type }) =
+    new JsonSpec.InCustomEmbedding[this.type, IO](
+          name, spec.asInstanceOf[JsonSpec.NoDefault[this.type, IO]])
+
+  final def fromJson(
+              spec: this.type =>
+                    JsonSpec[d.type, In] forSome { val d: this.type }) =
+    new JsonSpec.Reader[this.type](
+          spec(this).asInstanceOf[JsonSpec[this.type, In]])
+  final def toJson(
+              spec: this.type =>
+                    JsonSpec[d.type, Out] forSome { val d: this.type }) =
+    new JsonSpec.Writer[this.type](
+          spec(this).asInstanceOf[JsonSpec[this.type, Out]])
 }
 
 trait DefaultReprDocument extends Document {
@@ -718,14 +1213,16 @@ trait Collection extends Documents {
   val id: BasicFieldBase
 
   final def saveInto(dbc: DBCollection, doc: DocRepr,
-                     safety: Safety = Safety.Default, timeout: Int = 0): DocRepr = {
+                     safety: Safety = Safety.Default,
+                     timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
     dbc.save(dbo)
     dbo.repr
   }
 
   final def ensureIndexIn(dbc: DBCollection,
-                          index: this.type => Sort[c.type] forSome { val c: this.type },
+                          index: this.type => Sort[c.type]
+                                                forSome { val c: this.type },
                           name: String = null, unique: Boolean = false) {
     val dbo = new BasicDBObject
     val sort = index(this)
@@ -736,7 +1233,9 @@ trait Collection extends Documents {
                          else name, unique)
   }
 
-  def apply(filter: this.type => Filter[c.type] forSome { val c: this.type }): Query[this.type] =
+  def apply(filter: this.type =>
+                    Filter[c.type]
+                      forSome { val c: this.type }): Query[this.type] =
     new Query[this.type](this, filter(this).asInstanceOf[Filter[this.type]])
   def apply(): Query[this.type] =
     new Query[this.type](this)
@@ -751,7 +1250,8 @@ trait AssociatedCollection extends Collection {
   final def save(doc: DocRepr, safety: Safety = Safety.Default,
                  timeout: Int = 0): DocRepr =
     saveInto(dbCollection, doc, safety, timeout)
-  final def ensureIndex(index: this.type => Sort[c.type] forSome { val c: this.type },
-                        name: String = null, unique: Boolean = false) =
+  final def ensureIndex(
+              index: this.type => Sort[c.type] forSome { val c: this.type },
+              name: String = null, unique: Boolean = false) =
     ensureIndexIn(dbCollection, index, name, unique)
 }
