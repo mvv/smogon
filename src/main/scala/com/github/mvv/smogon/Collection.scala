@@ -1220,6 +1220,8 @@ trait Collection extends Documents {
     dbo.repr
   }
 
+  final def sizeOf(dbc: DBCollection): Long = dbc.count
+
   final def ensureIndexIn(dbc: DBCollection,
                           index: this.type => Sort[c.type]
                                                 forSome { val c: this.type },
@@ -1250,6 +1252,7 @@ trait AssociatedCollection extends Collection {
   final def save(doc: DocRepr, safety: Safety = Safety.Default,
                  timeout: Int = 0): DocRepr =
     saveInto(dbCollection, doc, safety, timeout)
+  final def size() = sizeOf(dbCollection)
   final def ensureIndex(
               index: this.type => Sort[c.type] forSome { val c: this.type },
               name: String = null, unique: Boolean = false) =
