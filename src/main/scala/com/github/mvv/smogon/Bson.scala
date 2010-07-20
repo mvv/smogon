@@ -117,4 +117,18 @@ object Bson {
         throw new IllegalArgumentException
       bson
   }).asInstanceOf[B]
+
+  def toJson(value: BsonValue): JsonValue = value match {
+    case BsonBool(x) => JsonBool(x)
+    case BsonInt(x) => JsonNum(x)
+    case BsonLong(x) => JsonNum(x)
+    case BsonDouble(x) => JsonNum(x)
+    case BsonStr(x) => JsonStr(x)
+    case BsonDate(x) => JsonNum(x.getTime)
+    case x: BsonId => JsonStr(x.toString)
+    case x: BsonArray => JsonArray(x.iterator.map(toJson(_)))
+    case x: BsonObject =>
+      JsonObject(x.iterator.map { case (k, v) => k -> toJson(v) })
+    case _ => JsonNull
+  }
 }

@@ -235,8 +235,51 @@ object JsonSpec {
 
   final class Writer[D <: Document](spec: JsonSpec[D, Out])
               extends (D#DocRepr => JsonObject) {
-    def apply(jo: D#DocRepr): JsonObject =
-      throw new UnsupportedOperationException
+    private def process[DD <: Document](
+                 spec: JsonSpec[DD, Out], repr: DD#DocRepr): JsonObject = {
+      val d = spec.jsonDocument
+      val dr = repr.asInstanceOf[d.DocRepr]
+      JsonObject(spec.jsonMembers.map { s =>
+        val value = s match {
+          case DocumentField(_, field) => field match {
+            case BasicField(field) =>
+              val f = field.asInstanceOf[d.BasicFieldBase]
+              Bson.toJson(f.toBson(f.get(dr)))
+            case EmbeddingField(field) =>
+              if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
+                val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
+                val doc = f.get(dr)
+                if (f.isNull(doc))
+                  JsonNull
+                else
+                  f.toJson(doc)
+              } else {
+                val f = field.asInstanceOf[d.EmbeddingFieldBase]
+                f.toJson(f.get(dr))
+              }
+          }
+          case InEmbedding(_, field, spec) =>
+            if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
+              val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
+              val r = f.get(dr)
+              if (f.isNull(r))
+                JsonNull
+              else
+                process[f.type](spec.asInstanceOf[Single[f.type, Out]], r)
+            } else {
+              val f = field.asInstanceOf[d.EmbeddingFieldBase]
+              val r = f.get(dr)
+              process[f.type](spec.asInstanceOf[Single[f.type, Out]], r)
+            }
+          case InCustomEmbedding(_, spec) =>
+            process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr)
+          case _ => JsonNull
+        }
+        s.jsonMember -> value
+      })
+    }
+
+    def apply(repr: D#DocRepr): JsonObject = process(spec, repr)
   }
 
   sealed trait HasLookup[D <: Document, +IO <: Direction]
@@ -666,6 +709,7 @@ sealed trait Document { document =>
 
   sealed trait OptEmbeddingFieldBase extends EmbeddingFieldBase {
     protected def nullDocRepr: DocRepr
+    def isNull(repr: DocRepr): Boolean
     final override def default = nullDocRepr
   }
 
@@ -1189,11 +1233,17 @@ sealed trait Document { document =>
                     JsonSpec[d.type, In] forSome { val d: this.type }) =
     new JsonSpec.Reader[this.type](
           spec(this).asInstanceOf[JsonSpec[this.type, In]])
+  final def fromJson =
+    new JsonSpec.Reader[this.type](
+          JsonSpec.Many[this.type, In](fieldByIndex))
   final def toJson(
               spec: this.type =>
                     JsonSpec[d.type, Out] forSome { val d: this.type }) =
     new JsonSpec.Writer[this.type](
           spec(this).asInstanceOf[JsonSpec[this.type, Out]])
+  final def toJson =
+    new JsonSpec.Writer[this.type](
+          JsonSpec.Many[this.type, Out](fieldByIndex))
 }
 
 trait DefaultReprDocument extends Document {
