@@ -1212,6 +1212,14 @@ trait Collection extends Documents {
 
   val id: BasicFieldBase
 
+  final def insertInto(dbc: DBCollection, doc: DocRepr,
+                       safety: Safety = Safety.Default,
+                       timeout: Int = 0): DocRepr = {
+    val dbo = dbObject(doc)
+    dbc.insert(dbo)
+    dbo.repr
+  }
+
   final def saveInto(dbc: DBCollection, doc: DocRepr,
                      safety: Safety = Safety.Default,
                      timeout: Int = 0): DocRepr = {
@@ -1249,6 +1257,9 @@ trait AssociatedCollection extends Collection {
   protected def dbCollection: DBCollection
   private[smogon] def getDbCollection = dbCollection
 
+  final def insert(doc: DocRepr, safety: Safety = Safety.Default,
+                   timeout: Int = 0): DocRepr =
+    insertInto(dbCollection, doc, safety, timeout)
   final def save(doc: DocRepr, safety: Safety = Safety.Default,
                  timeout: Int = 0): DocRepr =
     saveInto(dbCollection, doc, safety, timeout)
