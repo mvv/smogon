@@ -270,6 +270,8 @@ sealed trait Update[D <: Documents]
 final class Query[+C <: Collection] private(
               coll: C, queryBson: DBObject, sortBson: DBObject,
               projectionBson: DBObject) {
+  import Collection._
+
   private[smogon] def this(coll: C, filter: Filter[C]) =
     this(coll, filter.normalForm.toBson, new BasicDBObject, new BasicDBObject)
   private[smogon] def this(coll: C) =
@@ -329,9 +331,10 @@ final class Query[+C <: Collection] private(
 
   def removeFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                  timeout: Int = 0): Long = {
-    val wr = dbc.remove(queryBson)
-    safety match {
-      case Safety.Safe(_) => wr.getN
+    val cs = safetyOf(dbc, safety)
+    val wr = handleErrors(dbc.remove(queryBson))
+    cs match {
+      case Safety.Safe(_, _) => wr.getN
       case _ => 0
     }
   }

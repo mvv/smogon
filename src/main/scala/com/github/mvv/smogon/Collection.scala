@@ -22,7 +22,9 @@ import com.github.mvv.layson
 import layson.bson._
 import layson.json._
 import org.bson.BSONObject
-import com.mongodb.{DBObject, BasicDBObject, DBCollection}
+import com.mongodb.{
+         DBObject, BasicDBObject, DBCollection, WriteConcern, WriteResult,
+         MongoException}
 
 trait ReprBsonValue {
   type ValueRepr
@@ -1201,22 +1203,59 @@ object Safety {
   object Network extends Concrete {
     val value = 0
   }
-  final case class Safe(slaves: Int = 0) extends Concrete {
+  final case class Safe(slaves: Int = 0, timeout: Int = 0) extends Concrete {
     require(slaves >= 0)
+    require(timeout >= 0)
     val value = 1 + slaves
   }
 }
 
+object Collection {
+  def writeConcern(safety: Safety.Concrete): WriteConcern = safety match {
+    case Safety.Unsafe => WriteConcern.NONE
+    case Safety.Network => WriteConcern.NORMAL
+    case Safety.Safe(slaves, timeout) => new WriteConcern(1 + slaves, timeout)
+  }
+
+  def safetyOf(dbc: DBCollection,
+               safety: Safety = Safety.Default): Safety.Concrete =
+    safety match {
+      case Safety.Default =>
+        val wc = dbc.getWriteConcern
+        wc.getW match {
+          case w if w < 0 => Safety.Unsafe
+          case 0 => Safety.Network
+          case w => Safety.Safe(w - 1, wc.getWtimeout)
+        }
+      case safety: Safety.Concrete => safety
+    }
+
+  def handleErrors(body: => WriteResult): WriteResult =
+    try {
+      body
+    } catch {
+      case e: MongoException.DuplicateKey => throw new DuplicateKeyException
+      case e: MongoException => throw new SmogonException(e)
+    }
+  }
+
 trait Collection extends Documents {
+  import Collection._
+
   final type Coll = this.type
 
   val id: BasicFieldBase
+
+  final def defaultSafetyOf(dbc: DBCollection): Safety.Concrete = safetyOf(dbc)
+  final def defaultSafetyOf(dbc: DBCollection, safety: Safety.Concrete) =
+    dbc.setWriteConcern(writeConcern(safety))
 
   final def insertInto(dbc: DBCollection, doc: DocRepr,
                        safety: Safety = Safety.Default,
                        timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
-    dbc.insert(dbo)
+    val cs = safetyOf(dbc, safety)
+    handleErrors(dbc.insert(dbo))
     dbo.repr
   }
 
@@ -1224,7 +1263,8 @@ trait Collection extends Documents {
                      safety: Safety = Safety.Default,
                      timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
-    dbc.save(dbo)
+    val cs = safetyOf(dbc, safety)
+    handleErrors(dbc.save(dbo))
     dbo.repr
   }
 
@@ -1257,6 +1297,9 @@ trait AssociatedCollection extends Collection {
   protected def dbCollection: DBCollection
   private[smogon] def getDbCollection = dbCollection
 
+  final def defaultSafety() = defaultSafetyOf(dbCollection)
+  final def defaultSafety(safety: Safety.Concrete) =
+    defaultSafetyOf(dbCollection, safety)
   final def insert(doc: DocRepr, safety: Safety = Safety.Default,
                    timeout: Int = 0): DocRepr =
     insertInto(dbCollection, doc, safety, timeout)
