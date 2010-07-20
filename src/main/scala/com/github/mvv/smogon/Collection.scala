@@ -1143,6 +1143,22 @@ sealed trait Document { document =>
             doc = field.set(doc, dbo.repr)
           case field: ElementsArrayFieldBase =>
           case field: DocumentsArrayFieldBase =>
+            var ds = field.newArrayRepr
+            value match {
+              case elems: java.lang.Iterable[_] =>
+                elems.foreach { e =>
+                  val d = field.dbObject(field.create)
+                  d.putAll(e.asInstanceOf[DBObject])
+                  ds = field.append(ds, d.repr)
+                }
+              case elems: DBObject =>
+                elems.toMap.valuesIterator.foreach { e =>
+                  val d = field.dbObject(field.create)
+                  d.putAll(e.asInstanceOf[DBObject])
+                  ds = field.append(ds, d.repr)
+                }
+            }
+            doc = field.set(doc, ds)
         }
         value
       case None => value
