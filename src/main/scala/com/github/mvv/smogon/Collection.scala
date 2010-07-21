@@ -239,43 +239,56 @@ object JsonSpec {
                  spec: JsonSpec[DD, Out], repr: DD#DocRepr): JsonObject = {
       val d = spec.jsonDocument
       val dr = repr.asInstanceOf[d.DocRepr]
-      JsonObject(spec.jsonMembers.map { s =>
-        val value = s match {
+      JsonObject(spec.jsonMembers.flatMap { s =>
+        val sIt = s match {
+          case CondOut(spec, test) =>
+            if (test(dr))
+              Iterator.single(spec)
+            else
+              Iterator.empty
+          case spec =>
+            Iterator.single(spec)
+        }
+        val value = sIt.flatMap {
+          case ConvTo(_, field, conv) =>
+            val f = field.asInstanceOf[d.BasicFieldBase]
+            conv(f.get(dr)).iterator
           case DocumentField(_, field) => field match {
             case BasicField(field) =>
               val f = field.asInstanceOf[d.BasicFieldBase]
-              Bson.toJson(f.toBson(f.get(dr)))
+              Iterator.single(Bson.toJson(f.toBson(f.get(dr))))
             case EmbeddingField(field) =>
               if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
                 val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
                 val doc = f.get(dr)
-                if (f.isNull(doc))
-                  JsonNull
-                else
-                  f.toJson(doc)
+                Iterator.single(if (f.isNull(doc)) JsonNull else f.toJson(doc))
               } else {
                 val f = field.asInstanceOf[d.EmbeddingFieldBase]
-                f.toJson(f.get(dr))
+                Iterator.single(f.toJson(f.get(dr)))
               }
           }
           case InEmbedding(_, field, spec) =>
             if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
               val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
               val r = f.get(dr)
-              if (f.isNull(r))
-                JsonNull
-              else
-                process[f.type](spec.asInstanceOf[Single[f.type, Out]], r)
+              Iterator.single {
+                if (f.isNull(r))
+                  JsonNull
+                else
+                  process[f.type](spec.asInstanceOf[Single[f.type, Out]], r)
+              }
             } else {
               val f = field.asInstanceOf[d.EmbeddingFieldBase]
               val r = f.get(dr)
-              process[f.type](spec.asInstanceOf[Single[f.type, Out]], r)
+              Iterator.single(
+                process[f.type](spec.asInstanceOf[Single[f.type, Out]], r))
             }
           case InCustomEmbedding(_, spec) =>
-            process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr)
-          case _ => JsonNull
+            Iterator.single(
+              process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr))
+          case _ => Iterator.single(JsonNull)
         }
-        s.jsonMember -> value
+        value.map(v => s.jsonMember -> v)
       })
     }
 
@@ -388,6 +401,9 @@ object JsonSpec {
         Many(Seq(this.asInstanceOf[Single[D, In]],
                  spec.asInstanceOf[Single[D, In]]))
     }
+    def onlyIf(test: D#DocRepr => Boolean)(
+               implicit witness: IO <:< Out) =
+      CondOut(this.asInstanceOf[Single[D, Out]], test)
   }
   object Single {
     def unapply[D <: Document, IO <: Direction](
@@ -416,9 +432,16 @@ object JsonSpec {
     }
   }
 
-  final class OptMember[D <: Document](
-                spec: Member[D, In], alt: D#DocRepr => D#DocRepr)
-              extends Single[D, In] {
+  final case class CondOut[D <: Document](
+                     spec: Single[D, Out], test: D#DocRepr => Boolean)
+                   extends Single[D, Out] {
+    def jsonDocument = spec.jsonDocument
+    def jsonMember = spec.jsonMember
+    def jsonFields = spec.jsonFields
+  }
+  final case class OptMember[D <: Document](
+                     spec: Member[D, In], alt: D#DocRepr => D#DocRepr)
+                   extends Single[D, In] {
     def jsonDocument = spec.jsonDocument
     def jsonMember = spec.jsonMember
     def jsonFields = spec.jsonFields
