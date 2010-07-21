@@ -371,8 +371,10 @@ object JsonSpec {
             implicit witness: IO <:< In) =
       new RestIn(notFields(jsonDocument).toSet[D#FieldBase],
                  ignoreUnknown, this.asInstanceOf[NoDefault[D, In]])
-    def <<*(ignoreUnknown: Boolean = false)(implicit witness: IO <:< In) =
-      this <<! (d => Nil, ignoreUnknown)
+    def <<*()(implicit witness: IO <:< In) =
+      this <<! (d => Nil, false)
+    def <<*#()(implicit witness: IO <:< In) =
+      this <<! (d => Nil, true)
     def <<#()(implicit witness: IO <:< In) =
       new IgnoreRestIn[D](this.asInstanceOf[NoDefault[D, In]])
   }
