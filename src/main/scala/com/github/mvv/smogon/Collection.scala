@@ -275,13 +275,13 @@ object JsonSpec {
                 if (f.isNull(r))
                   JsonNull
                 else
-                  process[f.type](spec.asInstanceOf[Single[f.type, Out]], r)
+                  process[f.type](spec.asInstanceOf[JsonSpec[f.type, Out]], r)
               }
             } else {
               val f = field.asInstanceOf[d.EmbeddingFieldBase]
               val r = f.get(dr)
               Iterator.single(
-                process[f.type](spec.asInstanceOf[Single[f.type, Out]], r))
+                process[f.type](spec.asInstanceOf[JsonSpec[f.type, Out]], r))
             }
           case InCustomEmbedding(_, spec) =>
             Iterator.single(
