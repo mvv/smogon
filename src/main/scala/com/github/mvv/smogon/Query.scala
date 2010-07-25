@@ -294,9 +294,13 @@ final class Query[+C <: Collection] private(
   def sort[CC >: C <: Collection](sort: CC => Sort[c.type] forSome { val c: CC }) =
     new Query[C](coll, queryBson, sort(coll).toBson, projectionBson)
 
-  def findIn(dbc: DBCollection, skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] =
-    asIterator(dbc.find(queryBson, projectionBson, skip, limit)).
-      map(reprFromBson(_))
+  def findIn(dbc: DBCollection, skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = 
+    if (limit == 0)
+      Iterator.empty
+    else
+      asIterator {
+        dbc.find(queryBson, projectionBson, skip, if (limit > 0) -limit else 0)
+      } .map(reprFromBson(_))
   def find(skip: Int = 0, limit: Int = -1)(
            implicit witness: C <:< AssociatedCollection): Iterator[C#DocRepr] =
     findIn(witness(coll).getDbCollection, skip, limit)
