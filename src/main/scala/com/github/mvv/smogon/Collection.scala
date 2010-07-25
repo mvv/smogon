@@ -253,6 +253,8 @@ object JsonSpec {
           case ConvTo(_, field, conv) =>
             val f = field.asInstanceOf[d.BasicFieldBase]
             conv(f.get(dr)).iterator
+          case CustomFieldTo(_, _, conv) =>
+            conv(dr).iterator
           case DocumentField(_, field) => field match {
             case BasicField(field) =>
               val f = field.asInstanceOf[d.BasicFieldBase]
@@ -1250,8 +1252,12 @@ trait Document { document =>
   def enter[IO <: Direction](
         name: String)(
         spec: JsonSpec.NoDefault[d.type, IO] forSome { val d: this.type }) =
-    new JsonSpec.InCustomEmbedding[this.type, IO](
+    JsonSpec.InCustomEmbedding[this.type, IO](
           name, spec.asInstanceOf[JsonSpec.NoDefault[this.type, IO]])
+  def putOpt(name: String)(conv: DocRepr => Option[JsonValue]) =
+    JsonSpec.CustomFieldTo[this.type](name, this, conv)
+  def put(name: String)(conv: DocRepr => JsonValue) =
+    putOpt(name)(d => Some(conv(d)))
 
   final def fromJson(
               spec: this.type =>
