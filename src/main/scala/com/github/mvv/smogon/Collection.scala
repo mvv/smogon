@@ -564,7 +564,7 @@ object OptEmbeddingField {
     Some(x)
 }
 
-sealed trait Document { document =>
+trait Document { document =>
   import Document._
 
   type Coll <: Collection
