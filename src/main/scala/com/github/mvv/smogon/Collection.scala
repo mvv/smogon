@@ -22,6 +22,7 @@ import com.github.mvv.layson
 import layson.bson._
 import layson.json._
 import org.bson.BSONObject
+import org.bson.types.ObjectId
 import com.mongodb.{
          DBObject, BasicDBObject, DBCollection, WriteConcern, WriteResult,
          MongoException}
@@ -1308,6 +1309,11 @@ object Safety {
 }
 
 object Collection {
+  def genId(): BsonId = {
+    val id = ObjectId.get()
+    BsonId(id._time, id._machine, id._inc)
+  }
+
   def writeConcern(safety: Safety.Concrete): WriteConcern = safety match {
     case Safety.Unsafe => WriteConcern.NONE
     case Safety.Network => WriteConcern.NORMAL
