@@ -204,7 +204,10 @@ object JsonSpec {
         hl.jsonMemberSpec(name) match {
           case Right(s) =>
             seen += name
-            s match {
+            (s match {
+              case OptMember(spec, _) => spec
+              case _ => s
+            }) match {
               case DocumentField(_, BasicField(field)) =>
                 basicField(field, name, value)
               case DocumentField(_, EmbeddingField(field)) =>
@@ -258,9 +261,15 @@ object JsonSpec {
         }
       }
       hl.jsonMembers.foreach { single =>
-        if (!seen.contains(single.jsonMember))
-          throw new MissingFieldException(
-                      (path :+ single.jsonMember).mkString("."))
+        if (!seen.contains(single.jsonMember)) {
+          single match {
+            case OptMember(_, alt) =>
+              doc = alt(doc).asInstanceOf[d.DocRepr]
+            case _ =>
+              throw new MissingFieldException(
+                          (path :+ single.jsonMember).mkString("."))
+          }
+        }
       }
       doc
     }
