@@ -166,6 +166,31 @@ object JsonSpec {
         val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
         doc = f.set(doc, f.nullDocRepr)
       }
+      def documentsFieldWith[F <: DDD#DocumentsArrayFieldBase
+                                    forSome { type DDD <: Document }](
+            field: F, name: String, array: JsonArray,
+            spec: JsonSpec[F, In]) {
+        val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
+        var elems = f.newArrayRepr
+        array.iterator.zipWithIndex.foreach {
+          case (obj: JsonObject, _) =>
+            val elem = process[f.type](
+                         path :+ name, obj,
+                         spec.asInstanceOf[JsonSpec[f.type, In]])
+            f.append(elems, elem)
+          case (value, i) =>
+            throw new IllegalFieldValueException(
+                        (path :+ name).mkString(".") + "[" + i + "]", value)
+        }
+        doc = f.set(doc, elems)
+      }
+      def documentsField[F <: DDD#DocumentsArrayFieldBase
+                                forSome { type DDD <: Document }](
+            field: F, name: String, array: JsonArray) {
+        val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
+        val spec = Many[f.type, In](f.fields.toSeq)
+        documentsFieldWith[f.type](f, name, array, spec)
+      }
       def customEmbedding(
             name: String, obj: JsonObject, spec: NoDefault[DD, In]) {
         doc = process[d.type](
@@ -192,12 +217,28 @@ object JsonSpec {
                     throw new IllegalFieldValueException(
                                 (path :+ name).mkString("."), value)
                 }
+              case DocumentField(_, DocumentsArrayField(field)) =>
+                value match {
+                  case array: JsonArray =>
+                    documentsField(field, name, array)
+                  case _ =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value)
+                }
               case InEmbedding(_, field, spec) =>
                 (value, field) match {
                   case (obj: JsonObject, field) =>
                     embeddingFieldWith(field, name, obj, spec)
                   case (JsonNull, OptEmbeddingField(field)) =>
                     optEmbeddingField(field, name)
+                  case _ =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value)
+                }
+              case InDocuments(_, field, spec) =>
+                value match {
+                  case array: JsonArray =>
+                    documentsFieldWith(field, name, array, spec)
                   case _ =>
                     throw new IllegalFieldValueException(
                                 (path :+ name).mkString("."), value)
@@ -269,6 +310,9 @@ object JsonSpec {
                 val f = field.asInstanceOf[d.EmbeddingFieldBase]
                 Iterator.single(f.toJson(f.get(dr)))
               }
+            case DocumentsArrayField(field) =>
+              val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
+              Iterator.single(JsonArray(f.iterator(f.get(dr)).map(f.toJson(_))))
           }
           case InEmbedding(_, field, spec) =>
             if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
@@ -286,6 +330,12 @@ object JsonSpec {
               Iterator.single(
                 process[f.type](spec.asInstanceOf[JsonSpec[f.type, Out]], r))
             }
+          case InDocuments(_, field, spec) =>
+            val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
+            val elems = f.get(dr)
+            Iterator.single(JsonArray(f.iterator(elems).map { elem =>
+                process[f.type](spec.asInstanceOf[JsonSpec[f.type, Out]], elem)
+              }))
           case InCustomEmbedding(_, spec) =>
             Iterator.single(
               process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr))
@@ -536,6 +586,13 @@ object JsonSpec {
     def jsonField: F = field 
     override def jsonMember = name
   }
+  final case class InDocuments[D <: Document, F <: D#DocumentsArrayFieldBase,
+                               IO <: Direction](
+                     name: String, field: F, spec: JsonSpec[F, IO])
+                   extends Field[D, IO] {
+    def jsonField: F = field 
+    override def jsonMember = name
+  }
   final case class Lifted[D <: Document, F <: D#EmbeddingFieldBase,
                           IO <: Direction](spec: Single[F, IO])
                    extends Member[D, IO] {
@@ -564,6 +621,11 @@ object EmbeddingField {
 object OptEmbeddingField {
   def unapply[D <: Document](
         x: D#OptEmbeddingFieldBase): Option[D#OptEmbeddingFieldBase] =
+    Some(x)
+}
+object DocumentsArrayField {
+  def unapply[D <: Document](
+        x: D#DocumentsArrayFieldBase): Option[D#DocumentsArrayFieldBase] =
     Some(x)
 }
 
@@ -781,6 +843,12 @@ trait Document { document =>
     final def contains(filter: this.type =>
                                Filter[this.type]): Filter[Doc#Root] =
       Filter.Contains[Doc, this.type](this, filter(this))
+
+    final def enter[IO <: Direction](
+                spec: this.type => JsonSpec[d.type, IO]
+                                     forSome { val d: this.type }) =
+      JsonSpec.InDocuments[Doc, this.type, IO](
+        jsonMember, this, spec(this).asInstanceOf[JsonSpec[this.type, IO]])
   }
 
   protected def newDocRepr(): DocRepr
