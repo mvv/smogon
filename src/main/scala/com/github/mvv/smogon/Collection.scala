@@ -199,6 +199,14 @@ object JsonSpec {
                 path :+ name, obj,
                 spec.asInstanceOf[NoDefault[d.type, In]], doc)
       }
+      def liftedFromField[F <: DD#EmbeddingFieldBase](
+            field: F, name: String, value: JsonValue, spec: Single[F, In]) {
+        val f = field.asInstanceOf[d.EmbeddingFieldBase]
+        val r = process[f.type](path, JsonObject(name -> value),
+                                spec.asInstanceOf[Single[f.type, In]],
+                                f.get(doc))
+        doc = f.set(doc, r)
+      }
 
       val hl = spec.asInstanceOf[HasLookup[DD, In]]
       var seen = Set[String]()
@@ -256,6 +264,8 @@ object JsonSpec {
                     throw new IllegalFieldValueException(
                                 (path :+ name).mkString("."), value)
                 }
+              case Lifted(field, spec) =>
+                liftedFromField(field, name, value, spec)
             }
           case Left(Raise) =>
             throw new UnexpectedFieldException((path :+ name).mkString("."))
@@ -350,7 +360,15 @@ object JsonSpec {
           case InCustomEmbedding(_, spec) =>
             Iterator.single(
               process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr))
-          case _ => Iterator.single(JsonNull)
+          case Lifted(field, spec) =>
+            if (field.isInstanceOf[d.OptEmbeddingFieldBase])
+              Iterator.empty
+            else {
+              val f = field.asInstanceOf[d.EmbeddingFieldBase]
+              Iterator.single(
+                process[f.type](spec.asInstanceOf[Single[f.type, Out]],
+                                f.get(dr)))
+            }
         }
         value.map(v => s.jsonMember -> v)
       })
@@ -506,7 +524,7 @@ object JsonSpec {
     def jsonFields = spec.jsonFields
   }
   final case class OptMember[D <: Document](
-                     spec: Member[D, In], alt: D#DocRepr => D#DocRepr)
+                     spec: Single[D, In], alt: D#DocRepr => D#DocRepr)
                    extends Single[D, In] {
     def jsonDocument = spec.jsonDocument
     def jsonMember = spec.jsonMember
@@ -517,7 +535,7 @@ object JsonSpec {
 
     def orElse(alt: D#DocRepr => D#DocRepr)(
                implicit witness: IO <:< In): OptMember[D] =
-      new OptMember[D](this.asInstanceOf[Member[D, In]], alt)
+      new OptMember[D](this.asInstanceOf[Single[D, In]], alt)
     def ?()(implicit witness: IO <:< In): OptMember[D] = this orElse (d => d)
   }
   sealed trait Field[D <: Document, +IO <: Direction] extends Member[D, IO] {
@@ -605,10 +623,12 @@ object JsonSpec {
     override def jsonMember = name
   }
   final case class Lifted[D <: Document, F <: D#EmbeddingFieldBase,
-                          IO <: Direction](spec: Single[F, IO])
-                   extends Member[D, IO] {
-    def jsonDocument = spec.jsonDocument.jsonDocument
+                          IO <: Direction](
+                     field: F, spec: Single[F, IO])
+                   extends Single[D, IO] {
+    def jsonDocument = field.jsonDocument
     def jsonMember = spec.jsonMember
+    def jsonFields = Set[D#FieldBase]()
   }
 }
 
@@ -796,17 +816,35 @@ trait Document { document =>
     def open[IO <: Direction](
           spec: this.type =>
                 JsonSpec.NoDefault[d.type, IO]
-                  forSome { val d: this.type }) = spec(this) match {
-      case JsonSpec.Many(ss) =>
-        JsonSpec.Many(
-          ss.map(s =>
-            new JsonSpec.Lifted[Doc, this.type, IO](
-                  s.asInstanceOf[JsonSpec.Single[this.type, IO]])))
-      case s =>
-        new JsonSpec.Lifted[Doc, this.type, IO](
-              s.asInstanceOf[JsonSpec.Single[this.type, IO]])
+                  forSome { val d: this.type }): JsonSpec.NoDefault[Doc, IO] =
+      spec(this) match {
+        case JsonSpec.Many(ss) =>
+          JsonSpec.Many(
+            ss.map { s =>
+              s match {
+                case JsonSpec.OptMember(s, alt) =>
+                  val castedAlt = alt.asInstanceOf[Repr => Repr]
+                  JsonSpec.OptMember[Doc](
+                    JsonSpec.Lifted[Doc, this.type, In](
+                      this, s.asInstanceOf[JsonSpec.Single[this.type, In]]),
+                    dr => set(dr, castedAlt(get(dr)))).
+                      asInstanceOf[JsonSpec.Single[Doc, IO]]
+                case s =>
+                  JsonSpec.Lifted[Doc, this.type, IO](
+                    this, s.asInstanceOf[JsonSpec.Single[this.type, IO]])
+              }
+            })
+        case JsonSpec.OptMember(s, alt) =>
+          val castedAlt = alt.asInstanceOf[Repr => Repr]
+          JsonSpec.OptMember[Doc](
+            JsonSpec.Lifted[Doc, this.type, In](
+              this, s.asInstanceOf[JsonSpec.Single[this.type, In]]),
+            dr => set(dr, castedAlt(get(dr))))
+        case s =>
+          new JsonSpec.Lifted[Doc, this.type, IO](
+                this, s.asInstanceOf[JsonSpec.Single[this.type, IO]])
+      }
     }
-  }
 
   sealed trait OptEmbeddingFieldBase extends EmbeddingFieldBase {
     protected def nullDocRepr: DocRepr
