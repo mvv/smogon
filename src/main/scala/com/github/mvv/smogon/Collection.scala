@@ -16,7 +16,9 @@
 
 package com.github.mvv.smogon
 
-import scala.collection.generic.{SeqFactory, GenericTraversableTemplate}
+import scala.collection.generic.{
+         SeqFactory, MapFactory, GenericTraversableTemplate}
+import scala.collection.MapLike
 import scala.util.matching.Regex
 import com.github.mvv.layson
 import layson.bson._
@@ -836,6 +838,21 @@ trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
   }
 
+  trait MapArrayField[M[K, V] <: Map[K, V] with MapLike[K, V, M[K, V]]]
+          extends AbstractField with ArrayFieldBase {
+    type Key
+    type Repr >: M[Key, ElemRepr] <: Map[Key, ElemRepr]
+
+    protected def mapFactory: MapFactory[M]
+    protected def elemKey(repr: ElemRepr): Key
+
+    protected def newArrayRepr(): Repr = mapFactory.empty[Key, ElemRepr]
+    protected def append(repr: Repr, value: ElemRepr): Repr =
+      ((mapFactory.newBuilder[Key, ElemRepr] ++= repr) +=
+       (elemKey(value) -> value)).result
+    def iterator(repr: Repr): Iterator[ElemRepr] = repr.valuesIterator
+  }
+
   sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
     final type ElemRepr = ValueRepr
 
@@ -1250,6 +1267,44 @@ trait Document { document =>
                     with DocumentsArrayFieldBase
                     with DefaultReprDocument {
     final type Repr = C[DocRepr] 
+  }
+
+  abstract class DocumentsMapField[R, K, C[_, _]](
+                   getter: DocRepr => C[K, R],
+                   setter: (DocRepr, C[K, R]) => DocRepr,
+                   name: String = null)
+                 extends Field(getter, setter, name)
+                    with DocumentsArrayFieldBase {
+    final type Key = K
+  }
+
+  abstract class DocumentsMapFieldM[R, K, C[_, _]](
+                   getter: DocRepr => C[K, R],
+                   setter: (DocRepr, C[K, R]) => Unit,
+                   name: String = null)
+                 extends FieldM(getter, setter, name)
+                    with DocumentsArrayFieldBase {
+    final type Key = K
+  }
+
+  abstract class DocumentsMapFieldD[R, K, C[_, _]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with DocumentsArrayFieldBase {
+    final type Key = K
+    final type Repr = C[K, R] 
+    final type DocRepr = R
+  }
+
+  abstract class DocumentsMapFieldDD[K, C[_, _]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with DocumentsArrayFieldBase
+                    with DefaultReprDocument {
+    final type Key = K
+    final type Repr = C[K, DocRepr] 
   }
 
   final class DocObject private[smogon](
