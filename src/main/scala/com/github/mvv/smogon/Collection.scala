@@ -179,7 +179,7 @@ object JsonSpec {
             val elem = process[f.type](
                          path :+ name, obj,
                          spec.asInstanceOf[JsonSpec[f.type, In]])
-            f.append(elems, elem)
+            elems = f.append(elems, elem)
           case (value, i) =>
             throw new IllegalFieldValueException(
                         (path :+ name).mkString(".") + "[" + i + "]", value)
