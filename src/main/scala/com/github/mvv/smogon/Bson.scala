@@ -111,6 +111,8 @@ object Bson {
       BsonLong(x.longValue)
     case (JsonNum(x), c) if c.isAssignableFrom(classOf[BsonDouble]) =>
       BsonDouble(x.doubleValue)
+    case (JsonStr(BsonIdStr(x)), c) if c.isAssignableFrom(classOf[BsonId]) =>
+      x
     case (value, c) =>
       val bson = value.toBson
       if (!c.isAssignableFrom(bson.getClass))
