@@ -405,7 +405,7 @@ object JsonSpec {
       case v => v
     }
     def jsonMembers = spec.jsonMembers ++ {
-      jsonDocument.fields.filter { field =>
+      jsonDocument.fields.iterator.filter { field =>
         !spec.jsonFields.contains(field) && !notFields.contains(field)
       } .asInstanceOf[Iterator[Single[D, In]]]
     }
@@ -415,7 +415,7 @@ object JsonSpec {
                 spec: NoDefault[D, Out]) extends JsonSpec[D, Out] {
     def jsonDocument = spec.jsonDocument 
     def jsonMembers = spec.jsonMembers ++ {
-      jsonDocument.fields.filter { field =>
+      jsonDocument.fields.iterator.filter { field =>
         !spec.jsonFields.contains(field) && !notFields.contains(field)
       } .asInstanceOf[Iterator[Single[D, Out]]]
     }
