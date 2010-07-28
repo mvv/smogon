@@ -359,13 +359,15 @@ object JsonSpec {
             Iterator.single(
               process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr))
           case Lifted(field, spec) =>
-            if (field.isInstanceOf[d.OptEmbeddingFieldBase])
+            if (field.isInstanceOf[d.OptEmbeddingFieldBase] && {
+                  val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
+                  f.isNull(f.get(dr))
+                })
               Iterator.empty
             else {
               val f = field.asInstanceOf[d.EmbeddingFieldBase]
-              Iterator.single(
-                process[f.type](spec.asInstanceOf[Single[f.type, Out]],
-                                f.get(dr)))
+              process[f.type](spec.asInstanceOf[Single[f.type, Out]],
+                              f.get(dr)).iterator.map(_._2)
             }
         }
         value.map(v => s.jsonMember -> v)
