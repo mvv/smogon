@@ -299,44 +299,38 @@ object JsonSpec {
                  spec: JsonSpec[DD, Out], repr: DD#DocRepr): JsonObject = {
       val d = spec.jsonDocument
       val dr = repr.asInstanceOf[d.DocRepr]
-      JsonObject(spec.jsonMembers.flatMap { s =>
-        val sIt = s match {
-          case CondOut(spec, test) =>
-            if (test(dr))
-              Iterator.single(spec)
-            else
-              Iterator.empty
-          case spec =>
-            Iterator.single(spec)
-        }
-        val value = sIt.flatMap {
+      JsonObject(spec.jsonMembers.map { s =>
+        (s match {
+          case CondOut(spec, test) => if (test(dr)) Some(spec) else None
+          case spec => Some(spec)
+        }) .flatMap {
           case ConvTo(_, field, conv) =>
             val f = field.asInstanceOf[d.BasicFieldBase]
-            conv(f.get(dr)).iterator
+            conv(f.get(dr))
           case CustomFieldTo(_, _, conv) =>
-            conv(dr).iterator
+            conv(dr)
           case DocumentField(_, field) => field match {
             case BasicField(field) =>
               val f = field.asInstanceOf[d.BasicFieldBase]
-              Iterator.single(Bson.toJson(f.toBson(f.get(dr))))
+              Some(Bson.toJson(f.toBson(f.get(dr))))
             case EmbeddingField(field) =>
               if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
                 val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
                 val doc = f.get(dr)
-                Iterator.single(if (f.isNull(doc)) JsonNull else f.toJson(doc))
+                Some(if (f.isNull(doc)) JsonNull else f.toJson(doc))
               } else {
                 val f = field.asInstanceOf[d.EmbeddingFieldBase]
-                Iterator.single(f.toJson(f.get(dr)))
+                Some(f.toJson(f.get(dr)))
               }
             case DocumentsArrayField(field) =>
               val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
-              Iterator.single(JsonArray(f.iterator(f.get(dr)).map(f.toJson(_))))
+              Some(JsonArray(f.iterator(f.get(dr)).map(f.toJson(_))))
           }
           case InEmbedding(_, field, spec) =>
             if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
               val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
               val r = f.get(dr)
-              Iterator.single {
+              Some {
                 if (f.isNull(r))
                   JsonNull
                 else
@@ -345,33 +339,32 @@ object JsonSpec {
             } else {
               val f = field.asInstanceOf[d.EmbeddingFieldBase]
               val r = f.get(dr)
-              Iterator.single(
+              Some(
                 process[f.type](spec.asInstanceOf[JsonSpec[f.type, Out]], r))
             }
           case InDocuments(_, field, spec, trans) =>
             val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
             val elems = f.get(dr)
-            Iterator.single(JsonArray(trans(f.iterator(elems)).map { elem =>
+            Some(JsonArray(trans(f.iterator(elems)).map { elem =>
                 process[f.type](spec.asInstanceOf[JsonSpec[f.type, Out]],
                                 elem.asInstanceOf[f.DocRepr])
               }))
           case InCustomEmbedding(_, spec) =>
-            Iterator.single(
+            Some(
               process[d.type](spec.asInstanceOf[NoDefault[d.type, Out]], dr))
           case Lifted(field, spec) =>
             if (field.isInstanceOf[d.OptEmbeddingFieldBase] && {
                   val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
                   f.isNull(f.get(dr))
                 })
-              Iterator.empty
+              None
             else {
               val f = field.asInstanceOf[d.EmbeddingFieldBase]
               process[f.type](spec.asInstanceOf[Single[f.type, Out]],
-                              f.get(dr)).iterator.map(_._2)
+                              f.get(dr)).iterator.toSeq.headOption.map(_._2)
             }
-        }
-        value.map(v => s.jsonMember -> v)
-      })
+        } .map(v => s.jsonMember -> v)
+      } .filter(_.isDefined).map(_.get))
     }
 
     def apply(repr: D#DocRepr): JsonObject = process(spec, repr)
