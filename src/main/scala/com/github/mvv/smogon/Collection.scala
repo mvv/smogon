@@ -52,7 +52,7 @@ sealed trait Projection[C <: Collection] {
                              type D <: Document
                              type F <: D#FieldBase
                            }]
-  def toBson(include: Boolean): DBObject = {
+  def projectionBson(include: Boolean): DBObject = {
     val value = if (include) 1 else 0
     val bson = new BasicDBObject
     projectedFields.foreach { case (f, _) =>
@@ -77,7 +77,7 @@ sealed trait Sort[DS <: Documents] {
                           type D <: Document
                           type F <: D#FieldBase
                         }]
-  def toBson: DBObject = {
+  def sortBson: DBObject = {
     val bson = new BasicDBObject
     sortByFields.foreach { case (f, asc, _) =>
       bson.put(f.fieldRootName, if (asc) 1 else -1)
@@ -691,6 +691,7 @@ trait Document { document =>
 
     val fieldIndex: Int
     def fieldDocument: Doc = document
+    def fieldBson(value: Repr): BsonValue
 
     def default: Repr
 
@@ -714,6 +715,8 @@ trait Document { document =>
         case (f, _, w) => (f, false, w)
       }
     }
+
+    def :=(value: Repr) = Update.SetTo[Doc, this.type](this, value)
 
     final def jsonField: this.type = this
     final def as(name: String) = JsonSpec.Renamed[Doc, this.type](name, this)
@@ -764,6 +767,8 @@ trait Document { document =>
     final type ValueRepr = Repr
 
     val bsonClass: Class[Bson]
+
+    def fieldBson(value: Repr): Bson = toBson(value)
 
     def ===(value: Repr) = Filter.Eq[Doc, this.type](this, value)
     def !==(value: Repr) = !(this === value)
@@ -821,6 +826,8 @@ trait Document { document =>
     final type DocRepr = Repr
 
     def default = create
+    final def fieldBson(value: Repr): BsonObject =
+      BsonObject(fields.map(f => f.fieldName -> f.fieldBson(f.get(value))).toMap)
 
     def enter[IO <: Direction](
           spec: this.type => JsonSpec[d.type, IO]
@@ -874,6 +881,7 @@ trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr]
 
     final def default = newArrayRepr
+    def fieldBson(value: Repr): BsonArray
 
     final def size(n: Long) = Filter.Size[Doc, this.type](this, n)
   }
@@ -908,6 +916,9 @@ trait Document { document =>
   sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
     final type ElemRepr = ValueRepr
 
+    final def fieldBson(value: Repr) =
+      BsonArray(iterator(value).map(toBson(_)).toSeq: _*)
+
     final def contains(filter: ValueFilterBuilder[this.type] =>
                                ValueFilter[this.type]) =
       Filter.ContainsElem[Doc, this.type](
@@ -917,6 +928,9 @@ trait Document { document =>
   trait DocumentsArrayFieldBase extends ArrayFieldBase with Documents {
     final type Coll = document.Coll
     final type ElemRepr = DocRepr
+
+    final def fieldBson(value: Repr) =
+      BsonArray(iterator(value).map(toBson(_)).toSeq: _*)
 
     final def contains(filter: this.type =>
                                Filter[this.type]): Filter[Doc#Root] =
@@ -1362,6 +1376,9 @@ trait Document { document =>
     final type Key = K
     final type Repr = C[K, DocRepr] 
   }
+
+  final def toBson(value: DocRepr): BsonObject =
+    BsonObject(fields.map(f => f.fieldName -> f.fieldBson(f.get(value))).toMap)
 
   final class DocObject private[smogon](
                 private var doc: DocRepr) extends DBObject {

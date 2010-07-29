@@ -41,6 +41,7 @@ object MyCollectionEx extends MyCollection {
 object SimpleTest {
   var mongo: Mongo = null
   var db: DB = null
+  var dbc: DBCollection = null
 }
 
 class SimpleTest extends SpecificationWithJUnit {
@@ -49,6 +50,7 @@ class SimpleTest extends SpecificationWithJUnit {
   doBeforeSpec {
     mongo = new Mongo
     db = mongo.getDB("smogon_tests")
+    dbc = db.getCollection("mycoll")
   }
 
   doAfterSpec {
@@ -63,23 +65,33 @@ class SimpleTest extends SpecificationWithJUnit {
     MyCollection.fields.size must_== 4
   }
 
+  "Setting default safety level must actually set it" in {
+    MyCollection.defaultSafetyOf(dbc, Safety.Safe())
+    MyCollection.defaultSafetyOf(dbc).isInstanceOf[Safety.Safe] must_== true
+  }
+
+  "Creating index must succeed" in {
+    MyCollection.ensureIndexIn(dbc, m => m.field & m.opt.desc)
+    true must_== true
+  }
+
   "Saving must set _id" in {
-    val coll = db.getCollection("mycoll")
     val my = MyCollection.create
-    MyCollection.saveInto(coll, my)
+    MyCollection.saveInto(dbc, my)
     val id = MyCollection.id.get(my)
     id must_!= BsonId.Zero
   }
 
   "Querying must succeed" in {
-    val coll = db.getCollection("mycoll")
     val q = MyCollection(m => m.field > -10 || m.opt === "hello")
-    q.findOneIn(coll).isDefined must_== true
+    q.findOneIn(dbc).isDefined must_== true
   }
 
-  "Creating index must succeed" in {
-    val coll = db.getCollection("mycoll")
-    MyCollection.ensureIndexIn(coll, m => m.field & m.opt.desc)
-    true must_== true
+  "Updating must succeed" in {
+    MyCollection().updateIn(dbc, m => m.field := 100) must_== 1
+  }
+
+  "Updating must actually update" in {
+    MyCollection(m => m.field === 100).findOneIn(dbc).isDefined must_== true
   }
 }

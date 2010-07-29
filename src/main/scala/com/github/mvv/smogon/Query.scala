@@ -265,7 +265,46 @@ object Filter {
   }
 }
 
-sealed trait Update[D <: Documents]
+sealed trait Update[D <: Document] {
+  def &&(update: Update[D]): Update[D]
+  def toBson: BsonObject
+}
+
+object Update {
+  sealed trait Single[D <: Document] extends Update[D] {
+    def &&(update: Update[D]): Update[D] = update match {
+      case update: Single[_] => Many(Vector(this, update))
+      case Many(updates) => Many(this +: updates)
+    }
+  }
+  final case class Many[D <: Document](
+                     updates: Seq[Single[D]]) extends Update[D] {
+    def &&(update: Update[D]): Update[D] = update match {
+      case update: Single[_] => Many(this.updates :+ update)
+      case Many(updates) => Many(this.updates ++ updates)
+    }
+    def toBson = updates.foldLeft(new MapBsonObject()) { case (obj, update) =>
+      update.toBson.iterator.foldLeft(obj) { case (obj, (code, op)) =>
+        obj.get(code) match {
+          case Some(ops: BsonObject) =>
+            BsonObject(
+              obj.membersMap +
+              (code -> new MapBsonObject(
+                             op.asInstanceOf[BsonObject].membersMap ++
+                             ops.membersMap)))
+          case _ => BsonObject(obj.membersMap + (code -> op))
+        }
+      }
+    }
+  }
+  final case class SetTo[D <: Document, F <: D#FieldBase](
+                     field: F, value: F#Repr) extends Single[D] {
+    def toBson =
+      BsonObject("$set" ->
+        BsonObject(field.fieldName ->
+          field.fieldBson(value.asInstanceOf[field.Repr])))
+  }
+}
 
 final class Query[+C <: Collection] private(
               coll: C, queryBson: DBObject, sortBson: DBObject,
@@ -287,14 +326,16 @@ final class Query[+C <: Collection] private(
 
   def only[CC >: C <: Collection](
         proj: CC => Projection[c.type] forSome { val c: CC }) =
-    new Query[C](coll, queryBson, sortBson, proj(coll).toBson(true))
+    new Query[C](coll, queryBson, sortBson, proj(coll).projectionBson(true))
   def except[CC >: C <: Collection](
         proj: CC => Projection[c.type] forSome { val c: CC }) =
-    new Query[C](coll, queryBson, sortBson, proj(coll).toBson(false))
-  def sort[CC >: C <: Collection](sort: CC => Sort[c.type] forSome { val c: CC }) =
-    new Query[C](coll, queryBson, sort(coll).toBson, projectionBson)
+    new Query[C](coll, queryBson, sortBson, proj(coll).projectionBson(false))
+  def sort[CC >: C <: Collection](
+        sort: CC => Sort[c.type] forSome { val c: CC }) =
+    new Query[C](coll, queryBson, sort(coll).sortBson, projectionBson)
 
-  def findIn(dbc: DBCollection, skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = 
+  def findIn(dbc: DBCollection,
+             skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = 
     if (limit == 0)
       Iterator.empty
     else
@@ -318,7 +359,14 @@ final class Query[+C <: Collection] private(
 
   def updateIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
-        safety: Safety = Safety.Default, timeout: Int = 0): Long = 0
+        safety: Safety = Safety.Default, timeout: Int = 0): Long = {
+    val cs = Collection.safetyOf(dbc, safety)
+    val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson), false, true)
+    cs match {
+      case _: Safety.Safe => wr.getN
+      case _ => 0
+    }
+  }
   def update[CC >: C <: Collection](
         up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0)(
@@ -326,7 +374,14 @@ final class Query[+C <: Collection] private(
     updateIn[CC](witness(coll).getDbCollection, up, safety, timeout)
   def updateOneIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
-        safety: Safety = Safety.Default, timeout: Int = 0): Boolean = false
+        safety: Safety = Safety.Default, timeout: Int = 0): Boolean = {
+    val cs = Collection.safetyOf(dbc, safety)
+    val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson), false, false)
+    cs match {
+      case _: Safety.Safe => wr.getN == 1
+      case _ => false
+    }
+  }
   def updateOne[CC >: C <: Collection](
         up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0)(

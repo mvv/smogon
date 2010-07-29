@@ -29,8 +29,12 @@ object Bson {
 
   class BsonDBObject(obj: BsonObject) extends DBObject {
     def get(key: String): AnyRef = obj.get(key) match {
-      case Some(v) => fromRaw(v)
-      case None => throw new NoSuchElementException(key)
+      case Some(v) => toRaw(v)
+      case None =>
+        if (key == "_transientFields")
+          Nil
+        else
+          throw new NoSuchElementException(key)
     }
     def put(key: String, value: AnyRef) =
       throw new UnsupportedOperationException
