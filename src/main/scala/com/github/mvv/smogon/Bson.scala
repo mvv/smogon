@@ -64,7 +64,7 @@ object Bson {
     case c if c == classOf[BsonDouble] => BsonDouble.Zero
     case c if classOf[BsonStr].isAssignableFrom(c) => BsonStr.Empty
     case c if c == classOf[BsonDate] => BsonDate(new Date)
-    case c if c == classOf[BsonId] => BsonId(0, 0, 0)
+    case c if c == classOf[BsonId] => BsonId.Zero
     case c if classOf[BsonArray].isAssignableFrom(c) => BsonArray.Empty
     case c if classOf[BsonObject].isAssignableFrom(c) => BsonObject.Empty
     case _ => BsonNull
