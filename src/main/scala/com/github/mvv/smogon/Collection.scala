@@ -1052,6 +1052,24 @@ trait Document { document =>
                    fromRepr: R => BsonBool, toRepr: BsonBool => R)
         extends BasicFieldD[BsonBool, R](name)
 
+  class OptBoolField[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
+          name: String = null)(
+          implicit fromRepr: R => OptBsonBool, toRepr: OptBsonBool => R)
+        extends BasicField[OptBsonBool, R](getter, setter, name)
+
+  class OptBoolFieldM[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => Unit,
+          name: String = null)(
+          implicit fromRepr: R => OptBsonBool, toRepr: OptBsonBool => R)
+        extends BasicFieldM[OptBsonBool, R](getter, setter, name)
+
+  class OptBoolFieldD[R](
+          name: String = null)(
+          implicit witness: DocRepr =:= DefaultDocRepr,
+                   fromRepr: R => OptBsonBool, toRepr: OptBsonBool => R)
+        extends BasicFieldD[OptBsonBool, R](name)
+
   class IntField[R](
           getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
           name: String = null)(
