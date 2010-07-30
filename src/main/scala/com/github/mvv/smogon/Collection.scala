@@ -60,7 +60,7 @@ sealed trait Projection[C <: Collection] {
     }
     bson
   }
-  def &(proj: Projection[C]): Projection[C] =
+  def *(proj: Projection[C]): Projection[C] =
     new Projection.Many[C](projectedFields ++ proj.projectedFields)
 }
 
