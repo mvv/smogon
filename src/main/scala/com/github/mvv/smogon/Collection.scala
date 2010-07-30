@@ -716,7 +716,7 @@ trait Document { document =>
       }
     }
 
-    def :=(value: Repr) = Update.SetTo[Doc, this.type](this, value)
+    def =#(value: Repr) = Update.SetTo[Doc, this.type](this, value)
 
     final def jsonField: this.type = this
     final def as(name: String) = JsonSpec.Renamed[Doc, this.type](name, this)

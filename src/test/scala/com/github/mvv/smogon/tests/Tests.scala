@@ -88,10 +88,12 @@ class SimpleTest extends SpecificationWithJUnit {
   }
 
   "Updating must succeed" in {
-    MyCollection().updateIn(dbc, m => m.field := 100) must_== 1
+    MyCollection().updateIn(dbc, m => m.field =# 100 &&
+                                      m.opt =# "hello") must_== 1
   }
 
   "Updating must actually update" in {
-    MyCollection(m => m.field === 100).findOneIn(dbc).isDefined must_== true
+    MyCollection(m => m.field === 100 && m.opt === "hello").
+      findOneIn(dbc).isDefined must_== true
   }
 }
