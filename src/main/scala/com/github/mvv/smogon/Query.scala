@@ -304,6 +304,25 @@ object Update {
         BsonObject(field.fieldName ->
           field.fieldBson(value.asInstanceOf[field.Repr])))
   }
+  final case class Increment[D <: Document, F <: D#BasicFieldBase](
+                     field: F, value: F#Repr)(
+                     implicit witness: F#Bson <:< OptNumericBsonValue)
+                   extends Single[D] {
+    def toBson =
+      BsonObject("$inc" ->
+        BsonObject((field.fieldName ->
+          field.fieldBson(value.asInstanceOf[field.Repr])) :: Nil))
+  }
+  final case class Decrement[D <: Document, F <: D#BasicFieldBase](
+                     field: F, value: F#Repr)(
+                     implicit witness: F#Bson <:< OptNumericBsonValue)
+                   extends Single[D] {
+    def toBson =
+      BsonObject("$inc" ->
+        BsonObject((field.fieldName ->
+          -field.fieldBson(value.asInstanceOf[field.Repr])) :: Nil))
+  }
+
 }
 
 final class Query[+C <: Collection] private(

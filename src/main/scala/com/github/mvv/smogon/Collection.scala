@@ -774,6 +774,11 @@ trait Document { document =>
     def !==(value: Repr) = !(this === value)
     def in(values: Set[Repr]) = Filter.In[Doc, this.type](this, values)
     def notIn(values: Set[Repr]) = !(this in values)
+
+    def +=(value: Repr)(implicit witness: Bson <:< OptNumericBsonValue) =
+      Update.Increment[Doc, this.type](this, value)
+    def -=(value: Repr)(implicit witness: Bson <:< OptNumericBsonValue) =
+      Update.Decrement[Doc, this.type](this, value)
   }
 
   object BasicFieldBase {
