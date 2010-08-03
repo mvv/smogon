@@ -1539,6 +1539,8 @@ object Safety {
 }
 
 object Collection {
+  val DuplicateKeyRegex = """E[^\$]+\$([^\s]+).*""".r
+
   def genId(): BsonId = {
     val id = ObjectId.get()
     BsonId(id._time, id._machine, id._inc)
@@ -1567,7 +1569,11 @@ object Collection {
     try {
       body
     } catch {
-      case e: MongoException.DuplicateKey => throw new DuplicateKeyException
+      case e: MongoException.DuplicateKey =>
+        throw new DuplicateKeyException(e.getMessage match {
+                      case DuplicateKeyRegex(name) => name
+                      case _ => "unknown"
+                    })
       case e: MongoException => throw new SmogonException(e)
     }
   }
