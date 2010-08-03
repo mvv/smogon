@@ -1336,21 +1336,25 @@ trait Document { document =>
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
                    name: String = null)
                  extends Field(getter, setter, name)
-                    with DocumentsArrayFieldBase
+                    with DocumentsArrayFieldBase {
+    final type DocRepr = R
+  }
 
   abstract class DocumentsArrayFieldM[R, C[_]](
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
                    name: String = null)
                  extends FieldM(getter, setter, name)
-                    with DocumentsArrayFieldBase
+                    with DocumentsArrayFieldBase {
+    final type DocRepr = R
+  }
 
   abstract class DocumentsArrayFieldD[R, C[_]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
                     with DocumentsArrayFieldBase {
-    final type Repr = C[R] 
     final type DocRepr = R
+    final type Repr = C[R] 
   }
 
   abstract class DocumentsArrayFieldDD[C[_]](
@@ -1368,6 +1372,7 @@ trait Document { document =>
                    name: String = null)
                  extends Field(getter, setter, name)
                     with DocumentsArrayFieldBase {
+    final type DocRepr = R
     final type Key = K
   }
 
@@ -1377,6 +1382,7 @@ trait Document { document =>
                    name: String = null)
                  extends FieldM(getter, setter, name)
                     with DocumentsArrayFieldBase {
+    final type DocRepr = R
     final type Key = K
   }
 
@@ -1385,9 +1391,9 @@ trait Document { document =>
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
                     with DocumentsArrayFieldBase {
+    final type DocRepr = R
     final type Key = K
     final type Repr = C[K, R] 
-    final type DocRepr = R
   }
 
   abstract class DocumentsMapFieldDD[K, C[_, _]](
