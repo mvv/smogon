@@ -359,16 +359,14 @@ final class Query[+C <: Collection] private(
       Iterator.empty
     else
       asIterator {
-        dbc.find(queryBson, projectionBson, skip, if (limit > 0) -limit else 0)
+        dbc.find(queryBson, projectionBson, skip, if (limit > 0) -limit else 0).
+          sort(sortBson)
       } .map(reprFromBson(_))
   def find(skip: Int = 0, limit: Int = -1)(
            implicit witness: C <:< AssociatedCollection): Iterator[C#DocRepr] =
     findIn(witness(coll).getDbCollection, skip, limit)
   def findOneIn(dbc: DBCollection): Option[C#DocRepr] =
-    dbc.findOne(queryBson, projectionBson) match {
-      case null => None
-      case obj => Some(reprFromBson(obj))
-    }
+    findIn(dbc, 0, 1).toSeq.headOption
   def findOne()(implicit witness: C <:< AssociatedCollection): Option[C#DocRepr] =
     findOneIn(witness(coll).getDbCollection)
 
