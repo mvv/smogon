@@ -98,7 +98,7 @@ object Bson {
     case BsonDate(x) => x
     case BsonId(time, machine, increment) =>
       new ObjectId(time, machine, increment)
-    case BsonArray(x) => asIterable(x) 
+    case BsonArray(x) => asIterable(x.map(toRaw)) 
     case x: BsonObject => toDBObject(x)
     case _ => null
   }
