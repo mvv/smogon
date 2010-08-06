@@ -204,6 +204,19 @@ object JsonSpec {
                                 f.get(doc))
         doc = f.set(doc, r)
       }
+      def convField[F <: DDD#FieldBase forSome { type DDD <: Document }](
+            field: F, name: String, conv: PartialFunction[JsonValue, F#Repr],
+            value: JsonValue) {
+        val f = field.asInstanceOf[d.FieldBase]
+        val r = try {
+                  conv(value).asInstanceOf[f.Repr]
+                } catch {
+                  case e: Exception =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value, e)
+                }
+        doc = f.set(doc, r)
+      }
 
       val hl = spec.asInstanceOf[HasLookup[DD, In]]
       var seen = Set[String]()
@@ -215,6 +228,8 @@ object JsonSpec {
               case OptMember(spec, _) => spec
               case _ => s
             }) match {
+              case ConvFrom(name, field, conv) =>
+                convField(field, name, conv, value)
               case DocumentField(_, BasicField(field)) =>
                 basicField(field, name, value)
               case DocumentField(_, EmbeddingField(field)) =>
