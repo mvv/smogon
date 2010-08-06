@@ -228,6 +228,8 @@ object JsonSpec {
               case OptMember(spec, _) => spec
               case _ => s
             }) match {
+              case _: IgnoreInput[_, _] =>
+                throw new UnexpectedFieldException((path :+ name).mkString("."))
               case ConvFrom(name, field, conv) =>
                 convField(field, name, conv, value)
               case DocumentField(_, BasicField(field)) =>
@@ -287,6 +289,9 @@ object JsonSpec {
       hl.jsonMembers.foreach { single =>
         if (!seen.contains(single.jsonMember)) {
           single match {
+            case IgnoreInput(i) =>
+              val f = i.jsonField.asInstanceOf[d.FieldBase]
+              doc = f.set(doc, i.value.asInstanceOf[f.Repr])
             case OptMember(_, alt) =>
               doc = alt(doc).asInstanceOf[d.DocRepr]
             case _ =>
@@ -553,6 +558,30 @@ object JsonSpec {
     def jsonMember = jsonField.fieldName
   }
 
+  sealed trait IgnoreInput[D <: Document, F <: D#FieldBase]
+               extends Single[D, In] {
+    def jsonField: F
+    def value: F#Repr
+
+    def jsonDocument = jsonField.jsonDocument
+    def jsonMember = jsonField.fieldName
+    def jsonFields = Set(jsonField)
+  }
+  object IgnoreInput {
+    def unapply[D <: Document, F <: D#FieldBase](
+          spec: IgnoreInput[D, F]): Option[IgnoreInput[D, F]] = Some(spec)
+  }
+  final class Const[D <: Document, F <: D#FieldBase](
+                field: F, val value: F#Repr)
+              extends IgnoreInput[D, F] {
+    def jsonField = field
+  }
+  final class Eval[D <: Document, F <: D#FieldBase](
+                field: F, expr: => F#Repr)
+              extends IgnoreInput[D, F] {
+    def jsonField = field
+    def value = expr
+  }
   final case class Renamed[D <: Document, F <: D#FieldBase](
                      name: String, field: F)
                    extends Field[D, InOut] {
@@ -740,6 +769,10 @@ trait Document { document =>
     final def to(conv: Repr => JsonValue) = toOpt(r => Some(conv(r)))
     final def from(conv: PartialFunction[JsonValue, Repr]) =
       JsonSpec.ConvFrom[Doc, this.type](fieldName, this, conv)
+    final def const(value: Repr) =
+      new JsonSpec.Const[Doc, this.type](this, value)
+    final def eval(expr: => Repr) =
+      new JsonSpec.Eval[Doc, this.type](this, expr)
   }
 
   private val fieldByName: scala.collection.mutable.Map[String, FieldBase] =
