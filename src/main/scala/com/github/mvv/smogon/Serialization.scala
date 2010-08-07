@@ -421,8 +421,11 @@ object JsonSpec {
                  spec.asInstanceOf[Single[D, In]]))
     }
     def onlyIf(test: D#DocRepr => Boolean)(
-               implicit witness: IO <:< Out) =
+               implicit witness: IO <:< Out): CondOut[D] =
       CondOut(this.asInstanceOf[Single[D, Out]], test)
+    def onlyIf(test: Boolean)(
+               implicit witness: IO <:< Out): CondOut[D] =
+      onlyIf(_ => test)
   }
   object Single {
     def unapply[D <: Document, IO <: Direction](
