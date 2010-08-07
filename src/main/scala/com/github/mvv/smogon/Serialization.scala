@@ -484,7 +484,7 @@ object JsonSpec {
         extends Field[D, InOut] { self: D#FieldBase with DocumentField[D] => 
     final val jsonField = self
     final override val jsonFields: Set[D#FieldBase] = Set(self)
-    final override val jsonMember = self.fieldName
+    final override def jsonMember = self.fieldName
   }
   object DocumentField {
     def unapply[D <: Document, IO <: Direction](
