@@ -165,6 +165,11 @@ trait Document { document =>
       }
     }
 
+    def ===(value: Repr) = Filter.Eq[Doc, this.type](this, value)
+    def !==(value: Repr) = !(this === value)
+    def in(values: Set[Repr]) = Filter.In[Doc, this.type](this, values)
+    def notIn(values: Set[Repr]) = !(this in values)
+
     def =#(value: Repr) = Update.SetTo[Doc, this.type](this, value)
 
     final def as(name: String) = JsonSpec.Renamed[Doc, this.type](name, this)
@@ -221,11 +226,6 @@ trait Document { document =>
     val bsonClass: Class[Bson]
 
     def fieldBson(value: Repr): Bson = toBson(value)
-
-    def ===(value: Repr) = Filter.Eq[Doc, this.type](this, value)
-    def !==(value: Repr) = !(this === value)
-    def in(values: Set[Repr]) = Filter.In[Doc, this.type](this, values)
-    def notIn(values: Set[Repr]) = !(this in values)
 
     def +=(value: Repr)(implicit witness: Bson <:< OptNumericBsonValue) =
       Update.Increment[Doc, this.type](this, value)

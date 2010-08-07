@@ -193,17 +193,18 @@ object Filter {
       bson
     }
   }
-  final case class Eq[D <: Document, F <: D#BasicFieldBase](
-                      field: F, value: F#Repr) extends Simple[D, F] {
-    def conditionBson = Bson.toRaw(field.toBson(value.asInstanceOf[field.Repr]))
+  final case class Eq[D <: Document, F <: D#FieldBase](
+                     field: F, value: F#Repr) extends Simple[D, F] {
+    def conditionBson =
+      Bson.toRaw(field.fieldBson(value.asInstanceOf[field.Repr]))
   }
-  final case class In[D <: Document, F <: D#BasicFieldBase](
-                      field: F, values: Set[F#Repr]) extends Simple[D, F] {
+  final case class In[D <: Document, F <: D#FieldBase](
+                     field: F, values: Set[F#Repr]) extends Simple[D, F] {
     def conditionBson = {
       val bson = new BasicDBObject
       val list = new BasicDBList
       values.foreach(v =>
-        list.add(Bson.toRaw(field.toBson(v.asInstanceOf[field.Repr]))))
+        list.add(Bson.toRaw(field.fieldBson(v.asInstanceOf[field.Repr]))))
       bson.put("$in", list)
       bson
     }
