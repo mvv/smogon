@@ -17,6 +17,8 @@
 package com.github.mvv.smogon
 
 import java.util.Date
+import java.util.regex.Pattern
+import scala.util.matching.Regex
 import org.bson.types.ObjectId
 import org.bson.BSONObject
 import com.mongodb.DBObject
@@ -50,6 +52,7 @@ object Bson {
     def toMap = obj.membersMap.map { case (k, v) => (k, toRaw(v)) }
     def isPartialObject = false
     def markAsPartialObject() {}
+    override def toString = com.mongodb.util.JSON.serialize(this)
   }
 
   class DBBsonObject(dbo: DBObject)
@@ -65,6 +68,7 @@ object Bson {
     case c if classOf[BsonStr].isAssignableFrom(c) => BsonStr.Empty
     case c if c == classOf[BsonDate] => BsonDate(new Date)
     case c if c == classOf[BsonId] => BsonId.Zero
+    case c if c == classOf[BsonRegex] => BsonRegex.Any
     case c if classOf[BsonArray].isAssignableFrom(c) => BsonArray.Empty
     case c if classOf[BsonObject].isAssignableFrom(c) => BsonObject.Empty
     case _ => BsonNull
@@ -84,6 +88,7 @@ object Bson {
     case x: String => BsonStr(x)
     case x: Date => BsonDate(x)
     case x: ObjectId => BsonId(x._time, x._machine, x._inc)
+    case x: Pattern => BsonRegex(new Regex(x.toString))
     case x: java.lang.Iterable[_] =>
       BsonArray(x.view.map(e => fromRaw(e.asInstanceOf[AnyRef])).toSeq: _*)
     case x: DBObject => fromDBObject(x)
@@ -98,6 +103,7 @@ object Bson {
     case BsonDate(x) => x
     case BsonId(time, machine, increment) =>
       new ObjectId(time, machine, increment)
+    case BsonRegex(x) => x.pattern
     case BsonArray(x) => asIterable(x.map(toRaw)) 
     case x: BsonObject => toDBObject(x)
     case _ => null
@@ -132,6 +138,7 @@ object Bson {
     case BsonStr(x) => JsonStr(x)
     case BsonDate(x) => JsonNum(x.getTime)
     case x: BsonId => JsonStr(x.toString)
+    case BsonRegex(x) => JsonStr(x.toString)
     case x: BsonArray => JsonArray(x.iterator.map(toJson(_)))
     case x: BsonObject =>
       JsonObject(x.iterator.map { case (k, v) => k -> toJson(v) })

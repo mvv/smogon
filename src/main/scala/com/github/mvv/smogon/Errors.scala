@@ -8,3 +8,5 @@ class SmogonException(message: String, cause: Throwable)
 final case class DuplicateKeyException(indexName: String)
                  extends SmogonException(
                            "Duplicate key for unique index '" + indexName + "'")
+final case class UntranslatableQueryException[R <: Documents](filter: Filter[R])
+                 extends SmogonException("Failed to translate query " + filter)

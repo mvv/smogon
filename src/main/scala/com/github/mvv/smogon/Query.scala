@@ -122,31 +122,34 @@ sealed trait Filter[R <: Documents] {
   def linearize: Iterator[Filter[R]] = Iterator.single(this)
   def normalForm: Filter[R] = this
 
-  def toBson: DBObject
+  def toBson: BsonObject
 }
 
 object Filter {
   sealed trait Simple[D <: Document, F <: D#FieldBase] extends Filter[D#Root] {
     def unary_!(): Filter[D#Root] = Not(this)
     val field: F
-    def conditionBson: AnyRef
-    def toBson = {
-      val bson = new BasicDBObject
-      bson.put(field.fieldRootName, conditionBson)
-      bson
+    def operatorName: Option[String] = None
+    def negationName: Option[String] = None
+    def valueBson: BsonValue
+    final def condition = operatorName match {
+      case Some(name) => Right(name -> valueBson)
+      case None => Left(valueBson)
     }
+    final def conditionBson = operatorName match {
+      case Some(name) => BsonObject(name -> valueBson)
+      case None => valueBson
+    }
+    final def toBson = BsonObject(field.fieldRootName -> conditionBson)
   }
   final case class Not[D <: Document, F <: D#FieldBase](filter: Simple[D, F])
                    extends Simple[D, F] {
     override def unary_!() = filter
     val field = filter.field
-    def conditionBson = {
-      val bson = new BasicDBObject
-      filter match {
-        case Eq(_, _) => bson.put("$ne", filter.conditionBson)
-        case _ => bson.put("$not", filter.conditionBson)
-      }
-      bson
+    override def operatorName = filter.negationName.orElse(Some("$not"))
+    def valueBson = filter.negationName match {
+      case Some(name) => filter.valueBson
+      case None => filter.conditionBson
     }
   }
   final case class And[R <: Documents](first: Filter[R], second: Filter[R])
@@ -158,11 +161,171 @@ object Filter {
       case (f, s @ And(_, _)) => Iterator.single(f) ++ s.linearize
       case _ => Iterator(first, second)
     }
-    override def normalForm = And(first.normalForm, second.normalForm)
+    override def normalForm = (first.normalForm, second.normalForm) match {
+      case (f @ Or(_, _), s @ Or(_, _)) =>
+        (for { c1 <- f.linearize
+               c2 <- s.linearize }
+           yield And[R](c1, c2)).reduceLeft[Filter[R]](Or(_, _))
+      case (f @ Or(_, _), s) =>
+        f.linearize.map(And(_, s)).reduceLeft[Filter[R]](Or(_, _)) 
+      case (f, s @ Or(_, _)) =>
+        s.linearize.map(And(f, _)).reduceLeft[Filter[R]](Or(_, _)) 
+      case (f, s) => And(f, s)
+    }
     def toBson = {
-      val bson = new BasicDBObject
-      linearize.foreach(b => bson.putAll(b.toBson))
-      bson
+      import And.Context
+      var alwaysFalse = false
+      val ctxs = linearize.foldLeft(Map[String, Context]()) { (m, elem) =>
+        val c = elem.asInstanceOf[Simple[D, F] forSome {
+                                    type D <: Document
+                                    type F <: D#FieldBase
+                                  }]
+        def combine(valueByOp: Map[String, BsonValue], op: String,
+                    value: BsonValue): Map[String, BsonValue] = {
+          valueByOp.get(op) match {
+            case Some(old) =>
+              // TODO: Actual combining
+              valueByOp
+            case None =>
+              valueByOp + (op -> value)
+          }
+        }
+        val (fieldName, v) = c.toBson.members.head
+        val ctx = m.get(fieldName) match {
+          case Some(ctx @ Context(eqTest, regexTest, notRegexTest,
+                                  valueByOp, notValueByOp)) =>
+            c match {
+              case Eq(_, _) =>
+                val bson = c.valueBson
+                eqTest match {
+                  case Some(value) =>
+                    if (bson != value)
+                      alwaysFalse = true
+                    ctx
+                  case None =>
+                    regexTest.foreach { regex =>
+                      bson.asInstanceOf[OptBsonStr] match {
+                        case BsonNull =>
+                          alwaysFalse = true
+                        case BsonStr(str) =>
+                          val matcher = regex.pattern.matcher(str)
+                          if (!matcher.matches)
+                            alwaysFalse = true
+                      }
+                    }
+                    notRegexTest.foreach { regex =>
+                      bson.asInstanceOf[OptBsonStr] match {
+                        case BsonNull =>
+                        case BsonStr(str) =>
+                          val matcher = regex.pattern.matcher(str)
+                          if (matcher.matches)
+                            alwaysFalse = true
+                      }
+                    }
+                    ctx.copy(eqTest = Some(bson),
+                             regexTest = None, notRegexTest = None)
+                }
+              case Match(_, r) =>
+                eqTest match {
+                  case Some(value) =>
+                    value.asInstanceOf[OptBsonStr] match {
+                      case BsonNull =>
+                        alwaysFalse = true
+                      case BsonStr(str) =>
+                        val matcher = r.pattern.matcher(str)
+                        if (!matcher.matches)
+                          alwaysFalse = true
+                    }
+                    ctx
+                  case None => regexTest match {
+                    case Some(regex) =>
+                      val combined = ("(" + regex + ")|(" + r + ")").r
+                      ctx.copy(regexTest = Some(combined))
+                    case None =>
+                      ctx.copy(regexTest = Some(r))
+                  }
+                }
+              case Not(Match(_, r)) =>
+                eqTest match {
+                  case Some(value) =>
+                    value.asInstanceOf[OptBsonStr] match {
+                      case BsonNull =>
+                        alwaysFalse = true
+                      case BsonStr(str) =>
+                        val matcher = r.pattern.matcher(str)
+                        if (matcher.matches)
+                          alwaysFalse = true
+                    }
+                    ctx
+                  case None => notRegexTest match {
+                    case Some(regex) =>
+                      val combined = ("(" + regex + ")|(" + r + ")").r
+                      ctx.copy(notRegexTest = Some(combined))
+                    case None =>
+                      ctx.copy(notRegexTest = Some(r))
+                  }
+                }
+              case Not(filter) if c.operatorName == Some("$not") =>
+                val (op, value) = filter.condition.right.get
+                ctx.copy(notValueByOp = combine(valueByOp, op, value))
+              case c =>
+                val (op, value) = c.condition.right.get
+                ctx.copy(valueByOp = combine(valueByOp, op, value))
+            }
+          case None =>
+            c match {
+               case Eq(_, _) =>
+                 Context(Some(v), None, None, Map(), Map())
+               case Match(_, r) =>
+                 Context(None, Some(r), None, Map(), Map())
+               case Not(Match(_, r)) =>
+                 Context(None, None, Some(r), Map(), Map())
+               case Not(filter) if c.operatorName == Some("$not") =>
+                 val (op, value) = filter.condition.right.get
+                 Context(None, None, None, Map(), Map(op -> value))
+               case c =>
+                 val (op, value) = v.asInstanceOf[BsonObject].members.head
+                 Context(None, None, None, Map(op -> value), Map())
+            }
+        }
+        m + (fieldName -> ctx)
+      }
+      if (alwaysFalse)
+        BsonObject()
+      else
+        BsonObject(ctxs.mapValues(_.toBson(this)))
+    }
+  }
+  object And {
+    private object EmptyMap {
+      def unapply[A, B](m: Map[A, B]) = if (m.isEmpty) Some(m) else None
+    }
+    final case class Context(eqTest: Option[BsonValue],
+                             regexTest: Option[Regex],
+                             notRegexTest: Option[Regex],
+                             valueByOp: Map[String, BsonValue],
+                             notValueByOp: Map[String, BsonValue]) {
+      def toBson[R <: Documents](filter: Filter[R]): BsonValue = this match {
+        case Context(Some(value), None, None, EmptyMap(_), EmptyMap(_)) =>
+          value
+        case Context(Some(value), _, _, _, _) =>
+          copy(eqTest = None,
+               notValueByOp = (notValueByOp + ("$ne" -> value))).toBson(filter)
+        case Context(None, Some(regex), None, EmptyMap(_), EmptyMap(_)) =>
+          regex
+        case Context(None, None, Some(regex), _, EmptyMap(_)) =>
+          BsonObject((valueByOp.iterator ++
+                      Iterator.single("$not" -> BsonRegex(regex))).toMap)
+        case Context(None, None, None, _, _) =>
+          BsonObject((valueByOp.iterator ++
+                      (if (notValueByOp.isEmpty)
+                         Iterator.empty
+                       else
+                         Iterator.single(
+                           "$not" -> BsonObject(notValueByOp.iterator)))).toMap)
+        case _ =>
+          throw UntranslatableQueryException(filter)
+      }
     }
   }
   final case class Or[R <: Documents](first: Filter[R], second: Filter[R])
@@ -174,95 +337,66 @@ object Filter {
       case (f, s @ Or(_, _)) => Iterator.single(f) ++ s.linearize
       case _ => Iterator(first, second)
     }
-    override def normalForm = (first.normalForm, second.normalForm) match {
-      case (f @ And(_, _), s @ And(_, _)) =>
-        (for { d1 <- f.linearize
-               d2 <- s.linearize }
-           yield Or[R](d1, d2)).reduceLeft[Filter[R]](And(_, _))
-      case (f, s @ And(_, _)) =>
-        s.linearize.map(Or(f, _)).reduceLeft[Filter[R]](And(_, _)) 
-      case (f @ And(_, _), s) =>
-        f.linearize.map(Or(s, _)).reduceLeft[Filter[R]](And(_, _)) 
-      case (f, s) => Or(f, s)
-    }
-    def toBson = {
-      val bson = new BasicDBObject
-      val list = new BasicDBList
-      linearize.foreach(b => list.add(b.toBson))
-      bson.put("$or", list)
-      bson
-    }
+    override def normalForm = Or(first.normalForm, second.normalForm)
+    def toBson =
+      BsonObject("$or" -> BsonArray(linearize.map(_.toBson).toSeq: _*))
   }
   final case class Eq[D <: Document, F <: D#FieldBase](
                      field: F, value: F#Repr) extends Simple[D, F] {
-    def conditionBson =
-      Bson.toRaw(field.fieldBson(value.asInstanceOf[field.Repr]))
+    override def negationName = Some("$ne")
+    def valueBson = field.fieldBson(value.asInstanceOf[field.Repr])
   }
   final case class In[D <: Document, F <: D#FieldBase](
                      field: F, values: Set[F#Repr]) extends Simple[D, F] {
-    def conditionBson = {
-      val bson = new BasicDBObject
-      val list = new BasicDBList
-      values.foreach(v =>
-        list.add(Bson.toRaw(field.fieldBson(v.asInstanceOf[field.Repr]))))
-      bson.put("$in", list)
-      bson
-    }
+    override def operatorName = Some("$in")
+    override def negationName = Some("$nin")
+    def valueBson =
+      BsonArray(values.iterator.map(v =>
+                  field.fieldBson(v.asInstanceOf[field.Repr])).toSeq: _*)
   }
   final case class Less[D <: Document, F <: D#BasicFieldBase](
                      field: F, value: F#Repr)(
                      implicit witness: F#Bson <:< OptSimpleBsonValue)
                    extends Simple[D, F] {
-    def conditionBson = {
-      val bson = new BasicDBObject
-      bson.put("$lt", Bson.toRaw(field.toBson(value.asInstanceOf[field.Repr])))
-      bson
-    }
+    override def operatorName = Some("$lt")
+    override def negationName = Some("$gte")
+    def valueBson = field.toBson(value.asInstanceOf[field.Repr])
   }
   final case class LessOrEq[D <: Document, F <: D#BasicFieldBase](
                      field: F, value: F#Repr)(
                      implicit witness: F#Bson <:< OptSimpleBsonValue)
                    extends Simple[D, F] {
-    def conditionBson = {
-      val bson = new BasicDBObject
-      bson.put("$lte", Bson.toRaw(field.toBson(value.asInstanceOf[field.Repr])))
-      bson
-    }
+    override def operatorName = Some("$lte")
+    override def negationName = Some("$gt")
+    def valueBson = field.toBson(value.asInstanceOf[field.Repr])
   }
   final case class Mod[D <: Document, F <: D#BasicFieldBase](
                      field: F, divisor: F#Repr, result: F#Repr)(
                      implicit witness: F#Bson <:< OptIntegralBsonValue)
                    extends Simple[D, F] {
-    def conditionBson = {
-      val bson = new BasicDBObject
-      val args = new BasicDBList
-      args.add(Bson.toRaw(field.toBson(divisor.asInstanceOf[field.Repr])))
-      args.add(Bson.toRaw(field.toBson(result.asInstanceOf[field.Repr])))
-      bson.put("$mod", args)
-      bson
-    }
+    override def operatorName = Some("$mod")
+    def valueBson =
+      BsonArray(field.toBson(divisor.asInstanceOf[field.Repr]),
+                field.toBson(result.asInstanceOf[field.Repr]))
   }
   final case class Match[D <: Document, F <: D#BasicFieldBase](
                      field: F, regex: Regex)(
                      implicit witness: F#Bson <:< OptBsonStr)
                    extends Simple[D, F] {
-    def conditionBson = regex.pattern
+    def valueBson = regex
   }
   final case class Size[D <: Document, F <: D#ArrayFieldBase](
                      field: F, size: Long) extends Simple[D, F] {
-    def conditionBson = {
-      val bson = new BasicDBObject
-      bson.put("$size", size)
-      bson
-    }
+    override def operatorName = Some("$size")
+    def valueBson = size
   }
   final case class ContainsElem[D <: Document, F <: D#ElementsArrayFieldBase](
                      field: F, filter: ValueFilter[F]) extends Simple[D, F] {
-    def conditionBson = throw new UnsupportedOperationException
+    def valueBson = throw new UnsupportedOperationException
   }
   final case class Contains[D <: Document, F <: D#DocumentsArrayFieldBase](
                      field: F, filter: Filter[F]) extends Simple[D, F] {
-    def conditionBson = throw new UnsupportedOperationException
+    def valueBson = throw new UnsupportedOperationException
   }
 }
 
@@ -332,7 +466,15 @@ final class Query[+C <: Collection] private(
   import Collection._
 
   private[smogon] def this(coll: C, filter: Filter[C]) =
-    this(coll, filter.normalForm.toBson, new BasicDBObject, new BasicDBObject)
+    this(coll, Some(try {
+                      filter.normalForm.toBson
+                    } catch {
+                      case _: UntranslatableQueryException[_] =>
+                        throw new UntranslatableQueryException(filter)
+                    }).map {
+                 case obj: BsonObject if obj.iterator.isEmpty => null
+                 case bson => Bson.toDBObject(bson)
+               } .get, new BasicDBObject, new BasicDBObject)
   private[smogon] def this(coll: C) =
     this(coll, new BasicDBObject, new BasicDBObject, new BasicDBObject)
 
@@ -356,7 +498,7 @@ final class Query[+C <: Collection] private(
 
   def findIn(dbc: DBCollection,
              skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = 
-    if (limit == 0)
+    if (limit == 0 || queryBson == null)
       Iterator.empty
     else
       asIterator {
@@ -371,18 +513,24 @@ final class Query[+C <: Collection] private(
   def findOne()(implicit witness: C <:< AssociatedCollection): Option[C#DocRepr] =
     findOneIn(witness(coll).getDbCollection)
 
-  def count(dbc: DBCollection): Long = dbc.count(queryBson)
+  def count(dbc: DBCollection): Long =
+    if (queryBson == null) 0 else dbc.count(queryBson)
   def count()(implicit witness: C <:< AssociatedCollection): Long =
     count(witness(coll).getDbCollection)
 
   def updateIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0): Long = {
-    val cs = Collection.safetyOf(dbc, safety)
-    val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson), false, true)
-    cs match {
-      case _: Safety.Safe => wr.getN
-      case _ => 0
+    if (queryBson == null)
+      0
+    else {
+      val cs = Collection.safetyOf(dbc, safety)
+      val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson),
+                          false, true)
+      cs match {
+        case _: Safety.Safe => wr.getN
+        case _ => 0
+      }
     }
   }
   def update[CC >: C <: Collection](
@@ -393,11 +541,16 @@ final class Query[+C <: Collection] private(
   def updateOneIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0): Boolean = {
-    val cs = Collection.safetyOf(dbc, safety)
-    val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson), false, false)
-    cs match {
-      case _: Safety.Safe => wr.getN == 1
-      case _ => false
+    if (queryBson == null)
+      false
+    else {
+      val cs = Collection.safetyOf(dbc, safety)
+      val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson),
+                          false, false)
+      cs match {
+        case _: Safety.Safe => wr.getN == 1
+        case _ => false
+      }
     }
   }
   def updateOne[CC >: C <: Collection](
@@ -408,12 +561,16 @@ final class Query[+C <: Collection] private(
 
   def removeFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                  timeout: Int = 0): Long = {
-    val cs = safetyOf(dbc, safety)
-    val wr = handleErrors(dbc.remove(queryBson))
-    cs match {
-      case Safety.Safe(_, _) => wr.getN
-      case _ => 0
-    }
+    if (queryBson == null)
+      0
+    else {
+      val cs = safetyOf(dbc, safety)
+      val wr = handleErrors(dbc.remove(queryBson))
+      cs match {
+        case Safety.Safe(_, _) => wr.getN
+        case _ => 0
+      }
+    } 
   }
   def remove(safety: Safety = Safety.Default, timeout: Int = 0)(
              implicit witness: C <:< AssociatedCollection): Long =
