@@ -400,21 +400,21 @@ object Filter {
   }
 }
 
-sealed trait Update[D <: Document] {
-  def &&(update: Update[D]): Update[D]
+sealed trait Update[R <: Documents] {
+  def &&(update: Update[R]): Update[R]
   def toBson: BsonObject
 }
 
 object Update {
-  sealed trait Single[D <: Document] extends Update[D] {
-    def &&(update: Update[D]): Update[D] = update match {
+  sealed trait Single[R <: Documents] extends Update[R] {
+    def &&(update: Update[R]): Update[R] = update match {
       case update: Single[_] => Many(Vector(this, update))
       case Many(updates) => Many(this +: updates)
     }
   }
-  final case class Many[D <: Document](
-                     updates: Seq[Single[D]]) extends Update[D] {
-    def &&(update: Update[D]): Update[D] = update match {
+  final case class Many[R <: Documents](
+                     updates: Seq[Single[R]]) extends Update[R] {
+    def &&(update: Update[R]): Update[R] = update match {
       case update: Single[_] => Many(this.updates :+ update)
       case Many(updates) => Many(this.updates ++ updates)
     }
@@ -433,31 +433,30 @@ object Update {
     }
   }
   final case class SetTo[D <: Document, F <: D#FieldBase](
-                     field: F, value: F#Repr) extends Single[D] {
+                     field: F, value: F#Repr) extends Single[D#Root] {
     def toBson =
       BsonObject("$set" ->
-        BsonObject(field.fieldName ->
+        BsonObject(field.fieldRootName ->
           field.fieldBson(value.asInstanceOf[field.Repr])))
   }
   final case class Increment[D <: Document, F <: D#BasicFieldBase](
                      field: F, value: F#Repr)(
                      implicit witness: F#Bson <:< OptNumericBsonValue)
-                   extends Single[D] {
+                   extends Single[D#Root] {
     def toBson =
       BsonObject("$inc" ->
-        BsonObject((field.fieldName ->
+        BsonObject((field.fieldRootName ->
           field.fieldBson(value.asInstanceOf[field.Repr])) :: Nil))
   }
   final case class Decrement[D <: Document, F <: D#BasicFieldBase](
                      field: F, value: F#Repr)(
                      implicit witness: F#Bson <:< OptNumericBsonValue)
-                   extends Single[D] {
+                   extends Single[D#Root] {
     def toBson =
       BsonObject("$inc" ->
-        BsonObject((field.fieldName ->
+        BsonObject((field.fieldRootName ->
           -field.fieldBson(value.asInstanceOf[field.Repr])) :: Nil))
   }
-
 }
 
 final class Query[+C <: Collection] private(
