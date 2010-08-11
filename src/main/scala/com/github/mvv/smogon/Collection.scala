@@ -891,7 +891,8 @@ trait Document { document =>
           throw new NoSuchElementException(key)
     }
     def put(key: String, value: AnyRef): AnyRef = fieldByName.get(key) match {
-      case Some(field) => field match {
+      case Some(field) =>
+        field match {
           case field: BasicFieldBase =>
             doc = field.set(doc, field.fromBson(Bson.fromRaw(value).
                                    asInstanceOf[field.Bson]))

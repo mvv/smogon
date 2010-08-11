@@ -459,7 +459,7 @@ object Update {
   }
 }
 
-final class Query[+C <: Collection] private(
+final class Query[C <: Collection] private(
               coll: C, queryBson: DBObject, sortBson: DBObject,
               projectionBson: DBObject) {
   import Collection._
@@ -557,6 +557,31 @@ final class Query[+C <: Collection] private(
         safety: Safety = Safety.Default, timeout: Int = 0)(
         implicit witness: C <:< AssociatedCollection): Boolean =
     updateOneIn[CC](witness(coll).getDbCollection, up, safety, timeout)
+
+  def replaceIn(
+        dbc: DBCollection, doc: C#DocRepr, insert: Boolean = false,
+        safety: Safety = Safety.Default, timeout: Int = 0): Boolean = {
+    if (queryBson == null)
+      false
+    else {
+      val cs = safetyOf(dbc, safety)
+      val collDoc = doc.asInstanceOf[coll.DocRepr]
+      val dbo = if (insert)
+                  coll.dbObject(collDoc)
+                else
+                  Bson.toDBObject(coll.toBson(collDoc))
+      val wr = handleErrors(dbc.update(queryBson, dbo, false, insert))
+      cs match {
+        case Safety.Safe(_, _) => wr.getN > 0
+        case _ => false
+      }
+    }
+  }
+  def replace(
+        doc: C#DocRepr, insert: Boolean = false,
+        safety: Safety = Safety.Default, timeout: Int = 0)(
+        implicit witness: C <:< AssociatedCollection): Boolean =
+    replaceIn(witness(coll).getDbCollection, doc, insert, safety, timeout)
 
   def removeFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                  timeout: Int = 0): Long = {

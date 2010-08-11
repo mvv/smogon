@@ -42,6 +42,7 @@ object SimpleTest {
   var mongo: Mongo = null
   var db: DB = null
   var dbc: DBCollection = null
+  var id: BsonId = BsonId.Zero
 }
 
 class SimpleTest extends SpecificationWithJUnit {
@@ -78,7 +79,7 @@ class SimpleTest extends SpecificationWithJUnit {
   "Saving must set _id" in {
     val my = MyCollection.create
     MyCollection.saveInto(dbc, my)
-    val id = MyCollection.id.get(my)
+    id = MyCollection.id.get(my)
     id must_!= BsonId.Zero
   }
 
@@ -87,13 +88,20 @@ class SimpleTest extends SpecificationWithJUnit {
     q.findOneIn(dbc).isDefined must_== true
   }
 
-  "Updating must succeed" in {
-    MyCollection().updateIn(dbc, m => m.field =# 100 &&
-                                      m.opt =# "hello") must_== 1
-  }
-
-  "Updating must actually update" in {
+  "Updating a document must succeed" in {
+    MyCollection(_.id === id).
+      updateIn(dbc, m => m.field =# 100 && m.opt =# "hello") must_== 1
     MyCollection(m => m.field === 100 && m.opt === "hello").
       findOneIn(dbc).isDefined must_== true
+  }
+
+  "Replacing a document should succeed" in {
+    val myOpt = MyCollection(_.id === id).findOneIn(dbc)
+    myOpt.isDefined must_== true
+    val my = myOpt.get
+    MyCollection.field.set(my, 255)
+    MyCollection(_.id === id).replaceIn(dbc, my) must_== true
+    val upOpt = MyCollection(m => m.id === id && m.field === 255).findOneIn(dbc) 
+    upOpt.isDefined must_== true
   }
 }
