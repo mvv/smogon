@@ -333,11 +333,11 @@ trait Document { document =>
   sealed trait ArrayFieldBase extends FieldBase {
     type ElemRepr
 
-    protected def newArrayRepr(): Repr
-    protected def append(repr: Repr, value: ElemRepr): Repr
+    def newArrayRepr(): Repr
+    def append(repr: Repr, value: ElemRepr): Repr
     def iterator(repr: Repr): Iterator[ElemRepr]
 
-    final def default = newArrayRepr
+    def default = newArrayRepr
     def fieldBson(value: Repr): BsonArray
 
     final def size(n: Long) = Filter.Size[Doc, this.type](this, n)
@@ -349,8 +349,8 @@ trait Document { document =>
 
     protected def seqFactory: SeqFactory[S]
 
-    protected def newArrayRepr(): Repr = seqFactory.empty[ElemRepr]
-    protected def append(repr: Repr, value: ElemRepr): Repr =
+    def newArrayRepr(): Repr = seqFactory.empty[ElemRepr]
+    def append(repr: Repr, value: ElemRepr): Repr =
       seqFactory.concat(repr :+ value)
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
   }
@@ -361,10 +361,10 @@ trait Document { document =>
     type Repr >: M[Key, ElemRepr] <: Map[Key, ElemRepr]
 
     protected def mapFactory: MapFactory[M]
-    protected def elemKey(repr: ElemRepr): Key
+    def elemKey(repr: ElemRepr): Key
 
-    protected def newArrayRepr(): Repr = mapFactory.empty[Key, ElemRepr]
-    protected def append(repr: Repr, value: ElemRepr): Repr =
+    def newArrayRepr(): Repr = mapFactory.empty[Key, ElemRepr]
+    def append(repr: Repr, value: ElemRepr): Repr =
       ((mapFactory.newBuilder[Key, ElemRepr] ++= repr) +=
        (elemKey(value) -> value)).result
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.valuesIterator
@@ -730,9 +730,9 @@ trait Document { document =>
 
   abstract class ElementsArrayField[B <: BsonValue, R, C[X]](
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
-                   fieldName: String = null)(
+                   name: String = null)(
                    implicit fromRepr: R => B, toRepr: B => R)
-                 extends Field(getter, setter, fieldName)
+                 extends Field(getter, setter, name)
                     with ElementsArrayFieldBase {
     final type ValueRepr = R
     final type Bson = B
@@ -741,12 +741,18 @@ trait Document { document =>
     final def toBson(repr: R): B = fromRepr(repr)
   }
 
+  abstract class ElementsArrayFieldM[B <: BsonValue, R, C[X]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => B, toRepr: B => R)
+                 extends ElementsArrayField[B, R, C](
+                           getter, (doc, c) => { setter(doc, c); doc }, name)
+
   abstract class ElementsArrayFieldD[B <: BsonValue, R, C[_]](
-                   fieldName: String = null)(
+                   name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr,
                             fromRepr: R => B, toRepr: B => R)
-                 extends FieldD(fieldName)
-                    with ElementsArrayFieldBase {
+                 extends FieldD(name) with ElementsArrayFieldBase {
     final type Repr = C[R]
     final type ValueRepr = R
     final type Bson = B
@@ -762,6 +768,13 @@ trait Document { document =>
                  extends ElementsArrayField[BsonBool, R, C](
                            getter, setter, name)
 
+  abstract class BoolArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonBool, toRepr: BsonBool => R)
+                 extends ElementsArrayFieldM[BsonBool, R, C](
+                           getter, setter, name)
+
   abstract class BoolArrayFieldD[R, C[_]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr,
@@ -774,11 +787,118 @@ trait Document { document =>
                    implicit fromRepr: R => BsonInt, toRepr: BsonInt => R)
                  extends ElementsArrayField[BsonInt, R, C](getter, setter, name)
 
+  abstract class IntArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonInt, toRepr: BsonInt => R)
+                 extends ElementsArrayFieldM[BsonInt, R, C](
+                           getter, setter, name)
+
   abstract class IntArrayFieldD[R, C[_]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr,
                             fromRepr: R => BsonInt, toRepr: BsonInt => R)
                  extends ElementsArrayFieldD[BsonInt, R, C](name)
+
+  abstract class LongArrayField[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonLong, toRepr: BsonLong => R)
+                 extends ElementsArrayField[BsonLong, R, C](
+                           getter, setter, name)
+
+  abstract class LongArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonLong, toRepr: BsonLong => R)
+                 extends ElementsArrayFieldM[BsonLong, R, C](
+                           getter, setter, name)
+
+  abstract class LongArrayFieldD[R, C[_]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr,
+                            fromRepr: R => BsonLong, toRepr: BsonLong => R)
+                 extends ElementsArrayFieldD[BsonLong, R, C](name)
+
+  abstract class DoubleArrayField[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonDouble, toRepr: BsonDouble => R)
+                 extends ElementsArrayField[BsonDouble, R, C](
+                           getter, setter, name)
+
+  abstract class DoubleArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonDouble, toRepr: BsonDouble => R)
+                 extends ElementsArrayFieldM[BsonDouble, R, C](
+                           getter, setter, name)
+
+  abstract class DoubleArrayFieldD[R, C[_]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr,
+                            fromRepr: R => BsonDouble, toRepr: BsonDouble => R)
+                 extends ElementsArrayFieldD[BsonDouble, R, C](name)
+
+  abstract class StringArrayField[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonStr, toRepr: BsonStr => R)
+                 extends ElementsArrayField[BsonStr, R, C](
+                           getter, setter, name)
+
+  abstract class StringArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonStr, toRepr: BsonStr => R)
+                 extends ElementsArrayFieldM[BsonStr, R, C](
+                           getter, setter, name)
+
+  abstract class StringArrayFieldD[R, C[_]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr,
+                            fromRepr: R => BsonStr, toRepr: BsonStr => R)
+                 extends ElementsArrayFieldD[BsonStr, R, C](name)
+
+  abstract class DateArrayField[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonDate, toRepr: BsonDate => R)
+                 extends ElementsArrayField[BsonDate, R, C](
+                           getter, setter, name)
+
+  abstract class DateArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonDate, toRepr: BsonDate => R)
+                 extends ElementsArrayFieldM[BsonDate, R, C](
+                           getter, setter, name)
+
+  abstract class DateArrayFieldD[R, C[_]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr,
+                            fromRepr: R => BsonDate, toRepr: BsonDate => R)
+                 extends ElementsArrayFieldD[BsonDate, R, C](name)
+
+  abstract class IdArrayField[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonId, toRepr: BsonId => R)
+                 extends ElementsArrayField[BsonId, R, C](
+                           getter, setter, name)
+
+  abstract class IdArrayFieldM[R, C[_]](
+                   getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
+                   name: String = null)(
+                   implicit fromRepr: R => BsonId, toRepr: BsonId => R)
+                 extends ElementsArrayFieldM[BsonId, R, C](
+                           getter, setter, name)
+
+  abstract class IdArrayFieldD[R, C[_]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr,
+                            fromRepr: R => BsonId, toRepr: BsonId => R)
+                 extends ElementsArrayFieldD[BsonId, R, C](name)
 
   abstract class AbstractDocumentsArrayField(name: String = null)
                    extends AbstractField(name)
@@ -901,21 +1021,31 @@ trait Document { document =>
             dbo.putAll(value.asInstanceOf[DBObject])
             doc = field.set(doc, dbo.repr)
           case field: ElementsArrayFieldBase =>
+            var es = field.newArrayRepr
+            val it: Iterator[AnyRef] = value match {
+              case elems: java.lang.Iterable[_] =>
+                elems.iterator.asInstanceOf[java.util.Iterator[AnyRef]]
+              case elems: DBObject =>
+                elems.toMap.valuesIterator.asInstanceOf[Iterator[AnyRef]]
+            }
+            it.foreach { e =>
+              val elem = field.fromBson(
+                           Bson.fromRaw(e).asInstanceOf[field.Bson])
+              es = field.append(es, elem)
+            }
+            doc = field.set(doc, es)
           case field: DocumentsArrayFieldBase =>
             var ds = field.newArrayRepr
-            value match {
+            val it: Iterator[DBObject] = value match {
               case elems: java.lang.Iterable[_] =>
-                elems.foreach { e =>
-                  val d = field.dbObject(field.create)
-                  d.putAll(e.asInstanceOf[DBObject])
-                  ds = field.append(ds, d.repr)
-                }
+                elems.iterator.asInstanceOf[java.util.Iterator[DBObject]]
               case elems: DBObject =>
-                elems.toMap.valuesIterator.foreach { e =>
-                  val d = field.dbObject(field.create)
-                  d.putAll(e.asInstanceOf[DBObject])
-                  ds = field.append(ds, d.repr)
-                }
+                elems.toMap.valuesIterator.asInstanceOf[Iterator[DBObject]]
+            }
+            it.foreach { e =>
+              val d = field.dbObject(field.create)
+              d.putAll(e)
+              ds = field.append(ds, d.repr)
             }
             doc = field.set(doc, ds)
         }
