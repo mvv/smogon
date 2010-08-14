@@ -338,9 +338,16 @@ trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr]
 
     def default = newArrayRepr
-    def fieldBson(value: Repr): BsonArray
+    def elementBson(elem: ElemRepr): BsonValue
+    final def fieldBson(value: Repr) =
+      BsonArray(iterator(value).map(elementBson(_)).toSeq: _*)
 
     final def size(n: Long) = Filter.Size[Doc, this.type](this, n)
+
+    final def pushBack(elems: ElemRepr*) =
+      Update.Push[Doc, this.type](this, elems)
+    final def popFront() = Update.Pop[Doc, this.type](this, true)
+    final def popBack() = Update.Pop[Doc, this.type](this, false)
   }
 
   trait SeqArrayField[S[X] <: Seq[X] with GenericTraversableTemplate[X, S]]
@@ -373,8 +380,7 @@ trait Document { document =>
   sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
     final type ElemRepr = ValueRepr
 
-    final def fieldBson(value: Repr) =
-      BsonArray(iterator(value).map(toBson(_)).toSeq: _*)
+    final def elementBson(elem: ElemRepr) = toBson(elem)
 
     final def contains(filter: ValueFilterBuilder[this.type] =>
                                ValueFilter[this.type]) =
@@ -386,8 +392,7 @@ trait Document { document =>
     final type Coll = document.Coll
     final type ElemRepr = DocRepr
 
-    final def fieldBson(value: Repr) =
-      BsonArray(iterator(value).map(toBson(_)).toSeq: _*)
+    final def elementBson(elem: ElemRepr) = toBson(elem)
 
     final def contains(filter: this.type =>
                                Filter[this.type]): Filter[Doc#Root] =
