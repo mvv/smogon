@@ -346,6 +346,8 @@ trait Document { document =>
 
     final def pushBack(elems: ElemRepr*) =
       Update.Push[Doc, this.type](this, elems)
+    final def pull(elems: ElemRepr*) =
+      Update.Pull[Doc, this.type](this, elems)
     final def popFront() = Update.Pop[Doc, this.type](this, true)
     final def popBack() = Update.Pop[Doc, this.type](this, false)
   }

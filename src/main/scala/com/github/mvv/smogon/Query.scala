@@ -470,6 +470,19 @@ object Update {
             BsonArray(values.asInstanceOf[Seq[field.ElemRepr]].
                         map(field.elementBson(_)): _*)) :: Nil))
   }
+  final case class Pull[D <: Document, F <: D#ArrayFieldBase](
+                     field: F, values: Seq[F#ElemRepr]) extends Single[D#Root] {
+    def toBson =
+      if (values.size == 1)
+        BsonObject("$pull" ->
+          BsonObject((field.fieldRootName ->
+            field.elementBson(values(0).asInstanceOf[field.ElemRepr])) :: Nil))
+      else
+        BsonObject("$pullAll" ->
+          BsonObject((field.fieldRootName ->
+            BsonArray(values.asInstanceOf[Seq[field.ElemRepr]].
+                        map(field.elementBson(_)): _*)) :: Nil))
+  }
   final case class Pop[D <: Document, F <: D#ArrayFieldBase](
                      field: F, front: Boolean) extends Single[D#Root] {
     def toBson =
