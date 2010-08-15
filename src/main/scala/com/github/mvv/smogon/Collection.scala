@@ -668,6 +668,23 @@ trait Document { document =>
                    fromRepr: R => BsonId, toRepr: BsonId => R)
         extends BasicFieldD[BsonId, R](name)
 
+  class OptIdField[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
+          name: String = null)(
+        implicit fromRepr: R => OptBsonId, toRepr: OptBsonId => R)
+          extends BasicField[OptBsonId, R](getter, setter, name)
+
+  class OptIdFieldM[R](
+          getter: DocRepr => R, setter: (DocRepr, R) => Unit,
+          name: String = null)(
+        implicit fromRepr: R => OptBsonId, toRepr: OptBsonId => R)
+          extends BasicFieldM[OptBsonId, R](getter, setter, name)
+
+  class OptIdFieldD[R](name: String = null)(
+          implicit witness: DocRepr =:= DefaultDocRepr,
+                   fromRepr: R => OptBsonId, toRepr: OptBsonId => R)
+        extends BasicFieldD[OptBsonId, R](name)
+
   abstract class AbstractEmbeddingField(name: String)
                    extends AbstractField(name)
                       with EmbeddingFieldBase
