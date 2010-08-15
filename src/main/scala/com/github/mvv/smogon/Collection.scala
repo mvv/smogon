@@ -167,8 +167,11 @@ trait Document { document =>
 
     def ===(value: Repr) = Filter.Eq[Doc, this.type](this, value)
     def !==(value: Repr) = !(this === value)
-    def in(values: Set[Repr]) = Filter.In[Doc, this.type](this, values)
+    def in(values: Set[Repr]): Filter.In[Doc, this.type] =
+      Filter.In[Doc, this.type](this, values)
+    def in(values: Repr*): Filter.In[Doc, this.type] = in(values.toSet)
     def notIn(values: Set[Repr]) = !(this in values)
+    def notIn(values: Repr*) = !(this in values.toSet)
 
     def =#(value: Repr) = Update.SetTo[Doc, this.type](this, value)
 
