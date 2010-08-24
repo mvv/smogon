@@ -17,8 +17,9 @@
 package com.github.mvv.smogon
 
 import scala.collection.generic.{
-         SeqFactory, MapFactory, GenericTraversableTemplate}
-import scala.collection.MapLike
+         SeqFactory, SetFactory, MapFactory, GenericTraversableTemplate,
+         GenericSetTemplate}
+import scala.collection.{SetLike, MapLike}
 import scala.util.matching.Regex
 import com.github.mvv.layson
 import layson.bson._
@@ -358,7 +359,7 @@ trait Document { document =>
   }
 
   trait SeqArrayField[S[X] <: Seq[X] with GenericTraversableTemplate[X, S]]
-          extends AbstractField with ArrayFieldBase {
+        extends AbstractField with ArrayFieldBase {
     type Repr >: S[ElemRepr] <: Seq[ElemRepr]
 
     protected def seqFactory: SeqFactory[S]
@@ -369,8 +370,21 @@ trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
   }
 
+  trait SetArrayField[S[X] <: Set[X] with GenericSetTemplate[X, S]
+                                     with SetLike[X, S[X]]]
+        extends AbstractField with ArrayFieldBase {
+    type Repr >: S[ElemRepr] <: Set[ElemRepr]
+
+    protected def setFactory: SetFactory[S]
+
+    def newArrayRepr(): Repr = setFactory.empty[ElemRepr]
+    def append(repr: Repr, value: ElemRepr): Repr =
+      ((setFactory.newBuilder[ElemRepr] ++= repr) += value).result
+    def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
+  }
+
   trait MapArrayField[M[K, V] <: Map[K, V] with MapLike[K, V, M[K, V]]]
-          extends AbstractField with ArrayFieldBase {
+        extends AbstractField with ArrayFieldBase {
     type Key
     type Repr >: M[Key, ElemRepr] <: Map[Key, ElemRepr]
 
