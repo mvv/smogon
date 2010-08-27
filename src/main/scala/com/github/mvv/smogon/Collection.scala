@@ -406,7 +406,7 @@ trait Document { document =>
     final def contains(filter: ValueFilterBuilder[this.type] =>
                                ValueFilter[this.type]) =
       Filter.ContainsElem[Doc, this.type](
-        this, filter(new ValueFilterBuilder[this.type]))
+        this, filter(new ValueFilterBuilder[this.type](this)))
   }
 
   trait DocumentsArrayFieldBase extends ArrayFieldBase with Documents {
@@ -1163,11 +1163,12 @@ object Safety {
   object Network extends Concrete {
     val value = 0
   }
-  final case class Safe(slaves: Int = 0, timeout: Int = 0) extends Concrete {
+  sealed case class Safe(slaves: Int = 0, timeout: Int = 0) extends Concrete {
     require(slaves >= 0)
     require(timeout >= 0)
     val value = 1 + slaves
   }
+  object Safe extends Safe(0, 0)
 }
 
 object Collection {

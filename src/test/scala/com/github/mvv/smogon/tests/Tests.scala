@@ -29,7 +29,11 @@ class MyCollection extends DefaultReprCollection {
     object innerField extends DoubleFieldD[Double]
     innerField
   }
-  id | field | opt | embedded
+  object elems extends IntArrayFieldD[Int, Seq]
+                  with SeqArrayField[Vector] {
+    protected def seqFactory = Vector
+  }
+  id | field | opt | embedded | elems
 }
 
 object MyCollection extends MyCollection
@@ -63,7 +67,7 @@ class SimpleTest extends SpecificationWithJUnit {
   }
   
   "Number of fields must be correct" in {
-    MyCollection.fields.size must_== 4
+    MyCollection.fields.size must_== 5
   }
 
   "Setting default safety level must actually set it" in {
@@ -71,7 +75,7 @@ class SimpleTest extends SpecificationWithJUnit {
     MyCollection.defaultSafetyOf(dbc).isInstanceOf[Safety.Safe] must_== true
   }
 
-  "Creating index must succeed" in {
+  "Creating an index must succeed" in {
     MyCollection.ensureIndexIn(dbc, m => m.field & m.opt.desc)
     true must_== true
   }
@@ -90,8 +94,9 @@ class SimpleTest extends SpecificationWithJUnit {
 
   "Updating a document must succeed" in {
     MyCollection(_.id === id).
-      updateIn(dbc, m => m.field =# 100 && m.opt =# "hello") must_== 1
-    MyCollection(m => m.field === 100 && m.opt === "hello").
+      updateIn(dbc, m => m.field =# 100 && m.opt =# "hello" &&
+                         m.elems =# Seq(10, 20, 30)) must_== 1
+    MyCollection(m => m.field === 100 && m.opt === "hello" && m.elems.size(3)).
       findOneIn(dbc).isDefined must_== true
   }
 
@@ -103,5 +108,10 @@ class SimpleTest extends SpecificationWithJUnit {
     MyCollection(_.id === id).replaceIn(dbc, my) must_== true
     val upOpt = MyCollection(m => m.id === id && m.field === 255).findOneIn(dbc) 
     upOpt.isDefined must_== true
+  }
+
+  "Quering an embedded array field must succeed" in {
+    MyCollection(m => m.elems.contains(_.in(5, 20))).
+      findOneIn(dbc).isDefined must_== true
   }
 }

@@ -24,92 +24,173 @@ import com.mongodb.{
 sealed trait ValueFilter[V <: ReprBsonValue] {
   import ValueFilter._
 
-  def unary_!() = Not(this)
+  def unary_!(): ValueFilter[V]
   def &&(filter: ValueFilter[V]) = And(this, filter)
   def ||(filter: ValueFilter[V]) = Or(this, filter)
+
+  def linearize: Iterator[ValueFilter[V]] = Iterator.single(this)
+  def normalForm: ValueFilter[V]
 }
 
 object ValueFilter {
-  final case class Eq[V <: ReprBsonValue](value: V#ValueRepr)
-                   extends ValueFilter[V]
-  final case class In[V <: ReprBsonValue](values: Set[V#ValueRepr])
-                   extends ValueFilter[V]
+  sealed trait Simple[V <: ReprBsonValue] extends ValueFilter[V] {
+    val rbv: V
+
+    def unary_!(): ValueFilter[V] = Not(this)
+    def operatorName: Option[String] = None
+    def negationName: Option[String] = None
+
+    final def normalForm = this
+
+    def valueBson: BsonValue
+    final def conditionBson = operatorName match {
+      case Some(name) => BsonObject(name -> valueBson)
+      case None => valueBson
+    }
+  }
+  final case class Eq[V <: ReprBsonValue](rbv: V, value: V#ValueRepr)
+                   extends Simple[V] {
+    override def negationName = Some("$ne")
+    def valueBson = rbv.toBson(value.asInstanceOf[rbv.ValueRepr])
+  }
+  final case class In[V <: ReprBsonValue](rbv: V, values: Set[V#ValueRepr])
+                   extends Simple[V] {
+    override def operatorName = Some("$in")
+    override def negationName = Some("$nin")
+    def valueBson =
+      BsonArray(values.iterator.map(v =>
+                  rbv.toBson(v.asInstanceOf[rbv.ValueRepr])).toSeq: _*)
+  }
   final case class Less[V <: ReprBsonValue](
-                     value: V#ValueRepr)(
+                     rbv: V, value: V#ValueRepr)(
                      implicit witness: V#Bson <:< OptSimpleBsonValue)
-                   extends ValueFilter[V]
+                   extends Simple[V] {
+    override def operatorName = Some("$lt")
+    override def negationName = Some("$gte")
+    def valueBson = rbv.toBson(value.asInstanceOf[rbv.ValueRepr])
+  }
   final case class LessOrEq[V <: ReprBsonValue](
-                     value: V#ValueRepr)(
+                     rbv: V, value: V#ValueRepr)(
                      implicit witness: V#Bson <:< OptSimpleBsonValue)
-                   extends ValueFilter[V]
+                   extends Simple[V] {
+    override def operatorName = Some("$lte")
+    override def negationName = Some("$gt")
+    def valueBson = rbv.toBson(value.asInstanceOf[rbv.ValueRepr])
+  }
   final case class Mod[V <: ReprBsonValue](
-                     divisor: V#ValueRepr, result: V#ValueRepr)(
+                     rbv: V, divisor: V#ValueRepr, result: V#ValueRepr)(
                      implicit witness: V#Bson <:< OptIntegralBsonValue)
-                   extends ValueFilter[V]
+                   extends Simple[V] {
+    override def operatorName = Some("$mod")
+    def valueBson =
+      BsonArray(rbv.toBson(divisor.asInstanceOf[rbv.ValueRepr]),
+                rbv.toBson(result.asInstanceOf[rbv.ValueRepr]))
+  }
   final case class Match[V <: ReprBsonValue](
-                     regex: String, flags: String)(
+                     rbv: V, regex: Regex)(
                      implicit witness: V#Bson <:< OptBsonStr)
-                   extends ValueFilter[V]
-  final case class Not[V <: ReprBsonValue](filter: ValueFilter[V])
-                   extends ValueFilter[V]
+                   extends Simple[V] {
+    def valueBson = regex
+  }
+  final case class Not[V <: ReprBsonValue](filter: Simple[V])
+                   extends Simple[V] {
+    val rbv = filter.rbv
+    override def unary_!() = filter
+    override def operatorName = filter.negationName.orElse(Some("$not"))
+    def valueBson = filter.negationName match {
+      case Some(name) => filter.valueBson
+      case None => filter.conditionBson
+    }
+  }
   final case class And[V <: ReprBsonValue](
                      first: ValueFilter[V], second: ValueFilter[V])
-                   extends ValueFilter[V]
+                   extends ValueFilter[V] {
+    override def unary_!() = Or(!first, !second)
+    override def linearize: Iterator[ValueFilter[V]] = (first, second) match {
+      case (f @ And(_, _), s @ And(_, _)) => f.linearize ++ s.linearize
+      case (f @ And(_, _), s) => f.linearize ++ Iterator.single(s)
+      case (f, s @ And(_, _)) => Iterator.single(f) ++ s.linearize
+      case _ => Iterator(first, second)
+    }
+    override def normalForm = (first.normalForm, second.normalForm) match {
+      case (f @ Or(_, _), s @ Or(_, _)) =>
+        (for { c1 <- f.linearize
+               c2 <- s.linearize }
+           yield And[V](c1, c2)).reduceLeft[ValueFilter[V]](Or(_, _))
+      case (f @ Or(_, _), s) =>
+        f.linearize.map(And(_, s)).reduceLeft[ValueFilter[V]](Or(_, _)) 
+      case (f, s @ Or(_, _)) =>
+        s.linearize.map(And(f, _)).reduceLeft[ValueFilter[V]](Or(_, _)) 
+      case (f, s) => And(f, s)
+    }
+  }
   final case class Or[V <: ReprBsonValue](
                      first: ValueFilter[V], second: ValueFilter[V])
-                   extends ValueFilter[V]
+                   extends ValueFilter[V] {
+    override def unary_!() = And(!first, !second)
+    override def linearize: Iterator[ValueFilter[V]] = (first, second) match {
+      case (f @ Or(_, _), s @ Or(_, _)) => f.linearize ++ s.linearize
+      case (f @ Or(_, _), s) => f.linearize ++ Iterator.single(s)
+      case (f, s @ Or(_, _)) => Iterator.single(f) ++ s.linearize
+      case _ => Iterator(first, second)
+    }
+    override def normalForm = Or(first.normalForm, second.normalForm)
+  }
 }
 
-final class ValueFilterBuilder[V <: ReprBsonValue] {
-  def ===(value: V#ValueRepr) = ValueFilter.Eq(value)
+final case class ValueFilterBuilder[V <: ReprBsonValue](rbv: V) {
+  def ===(value: V#ValueRepr) = ValueFilter.Eq(rbv, value)
   def !==(value: V#ValueRepr) = !(this === value)
-  def in(values: Set[V#ValueRepr]) = ValueFilter.In(values)
+  def in(values: Set[V#ValueRepr]) = ValueFilter.In(rbv, values)
+  def in(values: V#ValueRepr*) = ValueFilter.In(rbv, values.toSet)
   def notIn(values: Set[V#ValueRepr]) = !(this in values)
+  def notIn(values: V#ValueRepr*) = !(this in values.toSet)
 }
 
 object ValueFilterBuilder {
-  final class BasicFilterOps[V <: ReprBsonValue] private[ValueFilterBuilder]()(
+  final class BasicFilterOps[V <: ReprBsonValue](
+                builder: ValueFilterBuilder[V])(
                 implicit witness: V#Bson <:< OptSimpleBsonValue) {
-    def <(value: V#ValueRepr) = ValueFilter.Less[V](value)
-    def <=(value: V#ValueRepr) = ValueFilter.LessOrEq[V](value)
+    def <(value: V#ValueRepr) = ValueFilter.Less[V](builder.rbv, value)
+    def <=(value: V#ValueRepr) = ValueFilter.LessOrEq[V](builder.rbv, value)
     def >(value: V#ValueRepr) = !(this <= value)
     def >=(value: V#ValueRepr) = !(this < value)
   }
 
   implicit def basicFilterOps[V <: ReprBsonValue](
-                 b: ValueFilterBuilder[V])(
+                 builder: ValueFilterBuilder[V])(
                  implicit witness: V#Bson <:< OptSimpleBsonValue) =
-    new BasicFilterOps
+    new BasicFilterOps(builder)
 
-  final class ModResultFilter[V <: ReprBsonValue] private[ValueFilterBuilder](
-                divisor: V#ValueRepr)(
+  final class ModResultFilter[V <: ReprBsonValue](
+                builder: ValueFilterBuilder[V], divisor: V#ValueRepr)(
                 implicit witness: V#Bson <:< OptIntegralBsonValue) {
-    def ===(result: V#ValueRepr) = ValueFilter.Mod[V](divisor, result)
+    def ===(result: V#ValueRepr) = ValueFilter.Mod[V](builder.rbv, divisor, result)
     def !==(result: V#ValueRepr) = !(this === result)
   }
 
-  final class IntegralFilterOps[V <: ReprBsonValue] private[ValueFilterBuilder]()(
+  final class IntegralFilterOps[V <: ReprBsonValue](
+                builder: ValueFilterBuilder[V])(
                 implicit witness: V#Bson <:< OptIntegralBsonValue) {
-    def %(divisor: V#ValueRepr) = new ModResultFilter[V](divisor)
+    def %(divisor: V#ValueRepr) = new ModResultFilter[V](builder, divisor)
   }
 
   implicit def integralFilterOps[V <: ReprBsonValue](
-                 b: ValueFilterBuilder[V])(
+                 builder: ValueFilterBuilder[V])(
                  implicit witness: V#Bson <:< OptIntegralBsonValue) =
-    new IntegralFilterOps
+    new IntegralFilterOps(builder)
 
-  final class StringFilterOps[V <: ReprBsonValue]()(
+  final class StringFilterOps[V <: ReprBsonValue](
+                builder: ValueFilterBuilder[V])(
                 implicit witness: V#Bson <:< OptBsonStr) {
-    def =~(rf: (String, String)) = ValueFilter.Match[V](rf._1, rf._2)
-    def =~(regex: String) = ValueFilter.Match[V](regex, "")
-    def !~(rf: (String, String)) = !(this =~ rf)
-    def !~(regex: String) = !(this =~ regex)
+    def =~(regex: Regex) = ValueFilter.Match[V](builder.rbv, regex)
+    def !~(regex: Regex) = !(this =~ regex)
   }
 
   implicit def stringFilterOps[V <: ReprBsonValue](
-                 b: ValueFilterBuilder[V])(
+                 builder: ValueFilterBuilder[V])(
                  implicit witness: V#Bson <:< OptBsonStr) =
-    new StringFilterOps
+    new StringFilterOps(builder)
 }
 
 sealed trait Filter[R <: Documents] {
@@ -127,8 +208,8 @@ sealed trait Filter[R <: Documents] {
 
 object Filter {
   sealed trait Simple[D <: Document, F <: D#FieldBase] extends Filter[D#Root] {
-    def unary_!(): Filter[D#Root] = Not(this)
     val field: F
+    def unary_!(): Filter[D#Root] = Not(this)
     def operatorName: Option[String] = None
     def negationName: Option[String] = None
     def valueBson: BsonValue
@@ -144,8 +225,8 @@ object Filter {
   }
   final case class Not[D <: Document, F <: D#FieldBase](filter: Simple[D, F])
                    extends Simple[D, F] {
-    override def unary_!() = filter
     val field = filter.field
+    override def unary_!() = filter
     override def operatorName = filter.negationName.orElse(Some("$not"))
     def valueBson = filter.negationName match {
       case Some(name) => filter.valueBson
@@ -392,7 +473,18 @@ object Filter {
   }
   final case class ContainsElem[D <: Document, F <: D#ElementsArrayFieldBase](
                      field: F, filter: ValueFilter[F]) extends Simple[D, F] {
-    def valueBson = throw new UnsupportedOperationException
+    override def operatorName = filter match {
+      case s: ValueFilter.Simple[_] => s.operatorName
+      case _ => throw UntranslatableQueryException(this)
+    }
+    override def negationName = filter match {
+      case s: ValueFilter.Simple[_] => s.negationName
+      case _ => throw UntranslatableQueryException(this)
+    }
+    def valueBson = filter match {
+      case s: ValueFilter.Simple[_] => s.valueBson
+      case _ => throw UntranslatableQueryException(this)
+    }
   }
   final case class Contains[D <: Document, F <: D#DocumentsArrayFieldBase](
                      field: F, filter: Filter[F]) extends Simple[D, F] {
