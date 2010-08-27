@@ -1152,7 +1152,7 @@ object Safety {
     val value: Int
   }
   object Concrete {
-    def unapply(x: Any): Option[Int] = x match {
+    def unapply(x: Safety): Option[Int] = x match {
       case x: Concrete => Some(x.value)
       case _ => None
     }
