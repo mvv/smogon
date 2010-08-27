@@ -557,7 +557,7 @@ final class Query[C <: Collection] private(
     else {
       val cs = Collection.safetyOf(dbc, safety)
       val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson),
-                          false, true)
+                          false, true, writeConcern(cs))
       cs match {
         case _: Safety.Safe => wr.getN
         case _ => 0
@@ -577,7 +577,7 @@ final class Query[C <: Collection] private(
     else {
       val cs = Collection.safetyOf(dbc, safety)
       val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson),
-                          false, false)
+                          false, false, writeConcern(cs))
       cs match {
         case _: Safety.Safe => wr.getN == 1
         case _ => false
@@ -602,9 +602,10 @@ final class Query[C <: Collection] private(
                   coll.dbObject(collDoc)
                 else
                   Bson.toDBObject(coll.toBson(collDoc))
-      val wr = handleErrors(dbc.update(queryBson, dbo, false, insert))
+      val wr = handleErrors(dbc.update(queryBson, dbo, false, insert,
+                                       writeConcern(cs)))
       cs match {
-        case Safety.Safe(_, _) => wr.getN > 0
+        case _: Safety.Safe => wr.getN > 0
         case _ => false
       }
     }
@@ -621,9 +622,9 @@ final class Query[C <: Collection] private(
       0
     else {
       val cs = safetyOf(dbc, safety)
-      val wr = handleErrors(dbc.remove(queryBson))
+      val wr = handleErrors(dbc.remove(queryBson, writeConcern(cs)))
       cs match {
-        case Safety.Safe(_, _) => wr.getN
+        case _: Safety.Safe => wr.getN
         case _ => 0
       }
     } 

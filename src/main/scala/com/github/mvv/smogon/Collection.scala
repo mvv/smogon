@@ -1226,7 +1226,7 @@ trait Collection extends Documents {
                        timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
     val cs = safetyOf(dbc, safety)
-    handleErrors(dbc.insert(dbo))
+    handleErrors(dbc.insert(dbo, writeConcern(cs)))
     dbo.repr
   }
 
@@ -1235,7 +1235,7 @@ trait Collection extends Documents {
                      timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
     val cs = safetyOf(dbc, safety)
-    handleErrors(dbc.save(dbo))
+    handleErrors(dbc.save(dbo, writeConcern(cs)))
     dbo.repr
   }
 
