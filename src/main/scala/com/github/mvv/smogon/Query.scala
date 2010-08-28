@@ -583,9 +583,17 @@ object Update {
   }
 }
 
+object Query {
+  val falseQueryBson = {
+    val dbo = new BasicDBObject
+    dbo.put("$nonexistent$", "exists")
+    dbo
+  }
+}
 final class Query[C <: Collection] private(
               coll: C, queryBson: DBObject, sortBson: DBObject,
               projectionBson: DBObject) {
+  import Query._
   import Collection._
 
   private[smogon] def this(coll: C, filter: Filter[C]) =
@@ -663,13 +671,15 @@ final class Query[C <: Collection] private(
     updateIn[CC](witness(coll).getDbCollection, up, safety, timeout)
   def updateOneIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
-        safety: Safety = Safety.Default, timeout: Int = 0): Boolean = {
-    if (queryBson == null)
+        upsert: Boolean = false, safety: Safety = Safety.Default,
+        timeout: Int = 0): Boolean = {
+    if (queryBson == null && !upsert)
       false
     else {
       val cs = Collection.safetyOf(dbc, safety)
-      val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson),
-                          false, false, writeConcern(cs))
+      val wr = dbc.update(if (queryBson == null) falseQueryBson else queryBson,
+                          Bson.toDBObject(up(coll).toBson),
+                          upsert, false, writeConcern(cs))
       cs match {
         case _: Safety.Safe => wr.getN == 1
         case _ => false
@@ -678,23 +688,54 @@ final class Query[C <: Collection] private(
   }
   def updateOne[CC >: C <: Collection](
         up: CC => Update[c.type] forSome { val c: CC },
-        safety: Safety = Safety.Default, timeout: Int = 0)(
+        upsert: Boolean = false, safety: Safety = Safety.Default,
+        timeout: Int = 0)(
         implicit witness: C <:< AssociatedCollection): Boolean =
-    updateOneIn[CC](witness(coll).getDbCollection, up, safety, timeout)
+    updateOneIn[CC](witness(coll).getDbCollection, up, upsert, safety, timeout)
+  def findAndUpdateIn[CC >: C <: Collection](
+        dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
+        upsert: Boolean = false, returnUpdated: Boolean = false,
+        safety: Safety = Safety.Default,
+        timeout: Int = 0): Option[C#DocRepr] = {
+    if (queryBson == null && !upsert)
+      None
+    else {
+      val cs = Collection.safetyOf(dbc, safety)
+      val dbo = dbc.findAndModify(if (queryBson == null) falseQueryBson
+                                  else queryBson, projectionBson, sortBson,
+                                  false, Bson.toDBObject(up(coll).toBson),
+                                  returnUpdated, upsert)
+      if (dbo == null)
+        None
+      else
+        Some(reprFromBson(dbo))
+    }
+  }
+  def findAndUpdate[CC >: C <: Collection](
+        up: CC => Update[c.type] forSome { val c: CC },
+        upsert: Boolean = false, returnUpdated: Boolean = false,
+        safety: Safety = Safety.Default, timeout: Int = 0)(
+        implicit witness: C <:< AssociatedCollection): Option[C#DocRepr] =
+    findAndUpdateIn[CC](
+      witness(coll).getDbCollection, up, upsert, returnUpdated, safety, timeout)
 
   def replaceIn(
-        dbc: DBCollection, doc: C#DocRepr, insert: Boolean = false,
+        dbc: DBCollection, doc: C#DocRepr, upsert: Boolean = false,
         safety: Safety = Safety.Default, timeout: Int = 0): Boolean = {
-    if (queryBson == null)
-      false
-    else {
+    if (queryBson == null) {
+      if (upsert) {
+        coll.insertInto(dbc, doc.asInstanceOf[coll.DocRepr], safety, timeout)
+        true
+      } else
+        false
+    } else {
       val cs = safetyOf(dbc, safety)
       val collDoc = doc.asInstanceOf[coll.DocRepr]
-      val dbo = if (insert)
+      val dbo = if (upsert)
                   coll.dbObject(collDoc)
                 else
                   Bson.toDBObject(coll.toBson(collDoc))
-      val wr = handleErrors(dbc.update(queryBson, dbo, false, insert,
+      val wr = handleErrors(dbc.update(queryBson, dbo, upsert, false,
                                        writeConcern(cs)))
       cs match {
         case _: Safety.Safe => wr.getN > 0
@@ -703,10 +744,10 @@ final class Query[C <: Collection] private(
     }
   }
   def replace(
-        doc: C#DocRepr, insert: Boolean = false,
+        doc: C#DocRepr, upsert: Boolean = false,
         safety: Safety = Safety.Default, timeout: Int = 0)(
         implicit witness: C <:< AssociatedCollection): Boolean =
-    replaceIn(witness(coll).getDbCollection, doc, insert, safety, timeout)
+    replaceIn(witness(coll).getDbCollection, doc, upsert, safety, timeout)
 
   def removeFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                  timeout: Int = 0): Long = {
@@ -729,6 +770,25 @@ final class Query[C <: Collection] private(
   def removeOne(safety: Safety = Safety.Default, timeout: Int = 0)(
                 implicit witness: C <:< AssociatedCollection): Boolean =
     removeOneFrom(witness(coll).getDbCollection, safety, timeout)
+  def findAndRemoveFrom[CC >: C <: Collection](
+        dbc: DBCollection, safety: Safety = Safety.Default,
+        timeout: Int = 0): Option[C#DocRepr] = {
+    if (queryBson == null)
+      None
+    else {
+      val cs = Collection.safetyOf(dbc, safety)
+      val dbo = dbc.findAndModify(queryBson, projectionBson, sortBson,
+                                  true, null, false, false)
+      if (dbo == null)
+        None
+      else
+        Some(reprFromBson(dbo))
+    }
+  }
+  def findAndRemove(
+        safety: Safety = Safety.Default, timeout: Int = 0)(
+        implicit witness: C <:< AssociatedCollection): Option[C#DocRepr] =
+    findAndRemoveFrom(witness(coll).getDbCollection, safety, timeout)
 
   override def toString = "Query(" + queryBson + ", " + sortBson + ", " +
                                      projectionBson + ")"
