@@ -350,6 +350,10 @@ trait Document { document =>
 
     final def pushBack(elems: ElemRepr*) =
       Update.Push[Doc, this.type](this, elems)
+    final def addToSet(elems: Set[ElemRepr]): Update.AddToSet[Doc, this.type] =
+      Update.AddToSet[Doc, this.type](this, elems)
+    final def addToSet(elems: ElemRepr*): Update.AddToSet[Doc, this.type] =
+      addToSet(elems.toSet)
     final def pull(elems: Set[ElemRepr]): Update.Pull[Doc, this.type] =
       Update.Pull[Doc, this.type](this, elems)
     final def pull(elems: ElemRepr*): Update.Pull[Doc, this.type] =

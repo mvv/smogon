@@ -562,6 +562,18 @@ object Update {
             BsonArray(values.asInstanceOf[Seq[field.ElemRepr]].
                         map(field.elementBson(_)): _*)) :: Nil))
   }
+  final case class AddToSet[D <: Document, F <: D#ArrayFieldBase](
+                     field: F, values: Set[F#ElemRepr]) extends Single[D#Root] {
+    def toBson =
+      BsonObject("$addToSet" ->
+        BsonObject(field.fieldRootName ->
+          (if (values.size == 1)
+             field.elementBson(values.head.asInstanceOf[field.ElemRepr])
+           else
+             BsonObject("$each" ->
+               BsonArray(values.asInstanceOf[Seq[field.ElemRepr]].
+                           map(field.elementBson(_)): _*)))))
+  }
   final case class Pull[D <: Document, F <: D#ArrayFieldBase](
                      field: F, values: Set[F#ElemRepr]) extends Single[D#Root] {
     def toBson =
