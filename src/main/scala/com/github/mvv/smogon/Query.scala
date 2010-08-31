@@ -355,12 +355,16 @@ object Filter {
             }
           case None =>
             c match {
-               case Eq(_, _) =>
+               case Eq(_, _) | ContainsElem(_, ValueFilter.Eq(_, _)) =>
                  Context(Some(v), None, None, Map(), Map())
                case Match(_, r) =>
                  Context(None, Some(r), None, Map(), Map())
+               case ContainsElem(_, ValueFilter.Match(_, r)) =>
+                 Context(None, Some(r), None, Map(), Map())
                case Not(Match(_, r)) =>
                  Context(None, None, Some(r), Map(), Map())
+               case Not(ContainsElem(_, ValueFilter.Match(_, r))) =>
+                 Context(None, Some(r), None, Map(), Map())
                case Not(filter) if c.operatorName == Some("$not") =>
                  val (op, value) = filter.condition.right.get
                  Context(None, None, None, Map(), Map(op -> value))
