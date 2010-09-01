@@ -55,24 +55,36 @@
       <plugin>
         <groupId>org.scala-tools</groupId>
         <artifactId>maven-scala-plugin</artifactId>
-        <version>2.14</version>
+        <version>2.14.1</version>
         <executions>
           <execution>
+            <id>scala-compile</id>
             <goals>
               <goal>compile</goal>
+            </goals>
+            <configuration>
+              <args>
+                <arg>-deprecation</arg>
+                <arg>-unchecked</arg>
+                <arg>-make:transitivenocp</arg>
+                <arg>-dependencyfile</arg>
+                <arg>${project.build.directory}/scala.deps</arg>
+              </args>
+            </configuration>
+          </execution>
+          <execution>
+            <id>scala-test-compile</id>
+            <goals>
               <goal>testCompile</goal>
             </goals>
+            <configuration>
+              <args>
+                <arg>-deprecation</arg>
+                <arg>-unchecked</arg>
+              </args>
+            </configuration>
           </execution>
         </executions>
-        <configuration>
-          <args>
-            <arg>-deprecation</arg>
-            <arg>-unchecked</arg>
-            <arg>-make:transitivenocp</arg>
-            <arg>-dependencyfile</arg>
-            <arg>${project.build.directory}/scala.deps</arg>
-          </args>
-        </configuration>
       </plugin>
     </plugins>
   </build>
