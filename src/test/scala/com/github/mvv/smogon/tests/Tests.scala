@@ -71,7 +71,7 @@ class SimpleTest extends SpecificationWithJUnit {
   }
 
   "Setting default safety level must actually set it" in {
-    MyCollection.defaultSafetyOf(dbc, Safety.Safe())
+    MyCollection.defaultSafetyOf(dbc, Safety.Safe)
     MyCollection.defaultSafetyOf(dbc).isInstanceOf[Safety.Safe] must_== true
   }
 
@@ -113,5 +113,23 @@ class SimpleTest extends SpecificationWithJUnit {
   "Quering an embedded array field must succeed" in {
     MyCollection(m => m.elems.contains(_.in(5, 20))).
       findOneIn(dbc).isDefined must_== true
+  }
+
+  "UpdateOne must return true with upsert" in {
+    MyCollection(_.field === 1).
+      updateOneIn(dbc, _.field =# 1, upsert = true) must_== true
+    MyCollection(_.field === 1).findOneIn(dbc).isDefined must_== true
+  }
+
+  "FindAndUpdate must return document with upsert" in {
+    val myOpt = MyCollection(m => m.field === 2).findAndUpdateIn(dbc, { m =>
+      m.field =# 2 &&
+      (m.embedded.innerField += 2.0)
+    }, upsert = true, returnUpdated = true)
+    myOpt.isDefined must_== true
+    val my = myOpt.get
+    MyCollection.field.get(my) must_== 2
+    MyCollection.embedded.innerField.
+      get(MyCollection.embedded.get(my)) must_== 2.0
   }
 }
