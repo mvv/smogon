@@ -119,6 +119,11 @@ object OptEmbeddingField {
         x: D#OptEmbeddingFieldBase): Option[D#OptEmbeddingFieldBase] =
     Some(x)
 }
+object ElementsArrayField {
+  def unapply[D <: Document](
+        x: D#ElementsArrayFieldBase): Option[D#ElementsArrayFieldBase] =
+    Some(x)
+}
 object DocumentsArrayField {
   def unapply[D <: Document](
         x: D#DocumentsArrayFieldBase): Option[D#DocumentsArrayFieldBase] =
@@ -404,6 +409,8 @@ trait Document { document =>
 
   sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
     final type ElemRepr = ValueRepr
+
+    val bsonClass: Class[Bson]
 
     final def elementBson(elem: ElemRepr) = toBson(elem)
 
@@ -778,11 +785,14 @@ trait Document { document =>
   abstract class ElementsArrayField[B <: BsonValue, R, C[X]](
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => DocRepr,
                    name: String = null)(
-                   implicit fromRepr: R => B, toRepr: B => R)
+                   implicit fromRepr: R => B, toRepr: B => R,
+                            bsonManifest: ClassManifest[B])
                  extends Field(getter, setter, name)
                     with ElementsArrayFieldBase {
     final type ValueRepr = R
     final type Bson = B
+
+    final val bsonClass = bsonManifest.erasure.asInstanceOf[Class[B]]
 
     final def fromBson(bson: B): R = toRepr(bson)
     final def toBson(repr: R): B = fromRepr(repr)
@@ -791,18 +801,22 @@ trait Document { document =>
   abstract class ElementsArrayFieldM[B <: BsonValue, R, C[X]](
                    getter: DocRepr => C[R], setter: (DocRepr, C[R]) => Unit,
                    name: String = null)(
-                   implicit fromRepr: R => B, toRepr: B => R)
+                   implicit fromRepr: R => B, toRepr: B => R,
+                            bsonManifest: ClassManifest[B])
                  extends ElementsArrayField[B, R, C](
                            getter, (doc, c) => { setter(doc, c); doc }, name)
 
   abstract class ElementsArrayFieldD[B <: BsonValue, R, C[_]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr,
-                            fromRepr: R => B, toRepr: B => R)
+                            fromRepr: R => B, toRepr: B => R,
+                            bsonManifest: ClassManifest[B])
                  extends FieldD(name) with ElementsArrayFieldBase {
     final type Repr = C[R]
     final type ValueRepr = R
     final type Bson = B
+
+    final val bsonClass = bsonManifest.erasure.asInstanceOf[Class[B]]
 
     final def fromBson(bson: B): R = toRepr(bson)
     final def toBson(repr: R): B = fromRepr(repr)

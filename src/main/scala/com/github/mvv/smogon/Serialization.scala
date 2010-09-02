@@ -89,6 +89,24 @@ object JsonSpec {
         val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
         doc = f.set(doc, f.nullDocRepr)
       }
+      def elementsField[F <: DDD#ElementsArrayFieldBase
+                               forSome { type DDD <: Document }](
+            field: F, name: String, array: JsonArray) {
+        val f = field.asInstanceOf[d.ElementsArrayFieldBase]
+        var elems = f.newArrayRepr
+        array.iterator.zipWithIndex.foreach { case (value, i) =>
+          val elem = try {
+                       f.fromBson(Bson.fromJson(value, f.bsonClass))
+                     } catch {
+                       case e: Exception =>
+                         throw new IllegalFieldValueException(
+                           (path :+ name).mkString(".") + "[" + i + "]",
+                           value, e)
+                     }
+          elems = f.append(elems, elem)
+        }
+        doc = f.set(doc, elems)
+      }
       def documentsFieldWith[F <: DDD#DocumentsArrayFieldBase
                                     forSome { type DDD <: Document }](
             field: F, name: String, array: JsonArray, spec: JsonSpec[F, In]) {
@@ -162,6 +180,14 @@ object JsonSpec {
                     embeddingField(field, name, obj)
                   case (JsonNull, OptEmbeddingField(field)) =>
                     optEmbeddingField(field, name)
+                  case _ =>
+                    throw new IllegalFieldValueException(
+                                (path :+ name).mkString("."), value)
+                }
+              case DocumentField(_, ElementsArrayField(field)) =>
+                value match {
+                  case array: JsonArray =>
+                    elementsField(field, name, array)
                   case _ =>
                     throw new IllegalFieldValueException(
                                 (path :+ name).mkString("."), value)
@@ -264,6 +290,10 @@ object JsonSpec {
                 val f = field.asInstanceOf[d.EmbeddingFieldBase]
                 Some(f.toJson(f.get(dr)))
               }
+            case ElementsArrayField(field) =>
+              val f = field.asInstanceOf[d.ElementsArrayFieldBase]
+              Some(JsonArray(f.iterator(f.get(dr)).
+                               map(e => Bson.toJson(f.toBson(e)))))
             case DocumentsArrayField(field) =>
               val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
               Some(JsonArray(f.iterator(f.get(dr)).map(f.toJson(_))))
