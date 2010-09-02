@@ -1060,7 +1060,8 @@ trait Document { document =>
           field.dbObject(field.get(doc))
         case field: ElementsArrayFieldBase =>
           asIterable(
-            field.iterator(field.get(doc)).map(field.toBson(_)).toIterable)
+            field.iterator(field.get(doc)).
+              map(e => Bson.toRaw(field.toBson(e))).toIterable)
         case field: DocumentsArrayFieldBase =>
           asIterable(
             field.iterator(field.get(doc)).map(field.dbObject).toIterable)
