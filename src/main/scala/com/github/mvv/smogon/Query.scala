@@ -17,6 +17,7 @@
 package com.github.mvv.smogon
 
 import scala.util.matching.Regex
+import org.slf4j.LoggerFactory
 import com.github.mvv.layson.bson._
 import com.mongodb.{
          DBObject, BasicDBObject, BasicDBList, DBCollection, WriteResult}
@@ -600,7 +601,7 @@ object Update {
 }
 
 object Query {
-  val falseQueryBson = {
+  private val falseQueryBson = {
     val dbo = new BasicDBObject
     dbo.put("$nonexistent$", "exists")
     dbo
@@ -644,7 +645,10 @@ final class Query[C <: Collection] private(
     new Query[C](coll, queryBson, sort(coll).sortBson, projectionBson)
 
   def findIn(dbc: DBCollection,
-             skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = 
+             skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = {
+    if (logger.isTraceEnabled)
+      logger.trace(dbc.getName + ".find(" + this + "), skip=" + skip +
+                   ", limit=" + limit)
     if (limit == 0 || queryBson == null)
       Iterator.empty
     else
@@ -652,6 +656,7 @@ final class Query[C <: Collection] private(
         dbc.find(queryBson, projectionBson, skip, if (limit > 0) -limit else 0).
           sort(sortBson)
       } .map(reprFromBson(_))
+  }
   def find(skip: Int = 0, limit: Int = -1)(
            implicit witness: C <:< AssociatedCollection): Iterator[C#DocRepr] =
     findIn(witness(coll).getDbCollection, skip, limit)
@@ -668,16 +673,29 @@ final class Query[C <: Collection] private(
   def updateIn[CC >: C <: Collection](
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
         safety: Safety = Safety.Default, timeout: Int = 0): Long = {
-    if (queryBson == null)
+    if (queryBson == null) {
+      if (logger.isTraceEnabled) {
+        val cs = Collection.safetyOf(dbc, safety)
+        val updateBson = Bson.toDBObject(up(coll).toBson)
+        logger.trace(dbc.getName + ".update(" + this + ", " + updateBson +
+                     "), safety=" + cs)
+        logger.trace(dbc.getName + ".update result is 0")
+      }
       0
-    else {
+    } else {
       val cs = Collection.safetyOf(dbc, safety)
-      val wr = dbc.update(queryBson, Bson.toDBObject(up(coll).toBson),
-                          false, true, writeConcern(cs))
-      cs match {
+      val updateBson = Bson.toDBObject(up(coll).toBson)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".update(" + this + ", " + updateBson +
+                     "), safety=" + cs)
+      val wr = dbc.update(queryBson, updateBson, false, true, writeConcern(cs))
+      val result = cs match {
         case _: Safety.Safe => wr.getN
         case _ => 0
       }
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".update result is " + result)
+      result
     }
   }
   def update[CC >: C <: Collection](
@@ -689,17 +707,30 @@ final class Query[C <: Collection] private(
         dbc: DBCollection, up: CC => Update[c.type] forSome { val c: CC },
         upsert: Boolean = false, safety: Safety = Safety.Default,
         timeout: Int = 0): Boolean = {
-    if (queryBson == null && !upsert)
+    if (queryBson == null && !upsert) {
+      if (logger.isTraceEnabled) {
+        val cs = Collection.safetyOf(dbc, safety)
+        val updateBson = Bson.toDBObject(up(coll).toBson)
+        logger.trace(dbc.getName + ".updateOne(" + this + ", " + updateBson +
+                     "), upsert=" + upsert + ", safety=" + cs)
+        logger.trace(dbc.getName + ".updateOne result is false")
+      }
       false
-    else {
+    } else {
       val cs = Collection.safetyOf(dbc, safety)
+      val updateBson = Bson.toDBObject(up(coll).toBson)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".updateOne(" + this + ", " + updateBson +
+                     "), upsert=" + upsert + ", safety=" + cs)
       val wr = dbc.update(if (queryBson == null) falseQueryBson else queryBson,
-                          Bson.toDBObject(up(coll).toBson),
-                          upsert, false, writeConcern(cs))
-      cs match {
+                          updateBson, upsert, false, writeConcern(cs))
+      val result = cs match {
         case _: Safety.Safe => wr.getN == 1
         case _ => false
       }
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".updateOne result is " + result)
+      result
     }
   }
   def updateOne[CC >: C <: Collection](
@@ -713,14 +744,28 @@ final class Query[C <: Collection] private(
         upsert: Boolean = false, returnUpdated: Boolean = false,
         safety: Safety = Safety.Default,
         timeout: Int = 0): Option[C#DocRepr] = {
-    if (queryBson == null && !upsert)
+    if (queryBson == null && !upsert) {
+      if (logger.isTraceEnabled) {
+        val cs = Collection.safetyOf(dbc, safety)
+        val updateBson = Bson.toDBObject(up(coll).toBson)
+        logger.trace(dbc.getName + ".findAndUpdate(" + this + ", " +
+                     updateBson + "), upsert=" + upsert +
+                     ", returnUpdated=" + returnUpdated + ", safety=" + cs)
+        logger.trace(dbc.getName + ".findAndUpdate result is null")
+      }
       None
-    else {
+    } else {
       val cs = Collection.safetyOf(dbc, safety)
+      val updateBson = Bson.toDBObject(up(coll).toBson)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".findAndUpdate(" + this + ", " +
+                     updateBson + "), upsert=" + upsert +
+                     ", returnUpdated=" + returnUpdated + ", safety=" + cs)
       val dbo = dbc.findAndModify(if (queryBson == null) falseQueryBson
                                   else queryBson, projectionBson, sortBson,
-                                  false, Bson.toDBObject(up(coll).toBson),
-                                  returnUpdated, upsert)
+                                  false, updateBson, returnUpdated, upsert)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".findAndUpdate result is " + dbo)
       if (dbo == null)
         None
       else
@@ -740,10 +785,21 @@ final class Query[C <: Collection] private(
         safety: Safety = Safety.Default, timeout: Int = 0): Boolean = {
     if (queryBson == null) {
       if (upsert) {
+        if (logger.isTraceEnabled)
+          logger.trace(dbc.getName + ".replace filter is always false, using " +
+                       dbc.getName + ".insert")
         coll.insertInto(dbc, doc.asInstanceOf[coll.DocRepr], safety, timeout)
         true
-      } else
+      } else {
+        if (logger.isTraceEnabled) {
+          val cs = safetyOf(dbc, safety)
+          val dbo = coll.dbObject(doc.asInstanceOf[coll.DocRepr])
+          logger.trace(dbc.getName + ".replace(" + this + ", " + dbo +
+                       "), upsert=false, safety=" + cs)
+          logger.trace(dbc.getName + ".replace result is false")
+        }
         false
+      }
     } else {
       val cs = safetyOf(dbc, safety)
       val collDoc = doc.asInstanceOf[coll.DocRepr]
@@ -751,12 +807,18 @@ final class Query[C <: Collection] private(
                   coll.dbObject(collDoc)
                 else
                   Bson.toDBObject(coll.toBson(collDoc))
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".replace(" + this + ", " + dbo +
+                     "), upsert=" + upsert + ", safety=" + cs)
       val wr = handleErrors(dbc.update(queryBson, dbo, upsert, false,
                                        writeConcern(cs)))
-      cs match {
+      val result = cs match {
         case _: Safety.Safe => wr.getN > 0
         case _ => false
       }
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".replace result is " + result)
+      result
     }
   }
   def replace(
@@ -767,15 +829,25 @@ final class Query[C <: Collection] private(
 
   def removeFrom(dbc: DBCollection, safety: Safety = Safety.Default,
                  timeout: Int = 0): Long = {
-    if (queryBson == null)
+    if (queryBson == null) {
+      if (logger.isTraceEnabled) {
+        val cs = safetyOf(dbc, safety)
+        logger.trace(dbc.getName + ".remove(" + this + "), safety=" + cs)
+        logger.trace(dbc.getName + ".remove result is false")
+      }
       0
-    else {
+    } else {
       val cs = safetyOf(dbc, safety)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".remove(" + this + "), safety=" + cs)
       val wr = handleErrors(dbc.remove(queryBson, writeConcern(cs)))
-      cs match {
+      val result = cs match {
         case _: Safety.Safe => wr.getN
         case _ => 0
       }
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".remove result is " + result)
+      result
     } 
   }
   def remove(safety: Safety = Safety.Default, timeout: Int = 0)(
@@ -789,12 +861,21 @@ final class Query[C <: Collection] private(
   def findAndRemoveFrom[CC >: C <: Collection](
         dbc: DBCollection, safety: Safety = Safety.Default,
         timeout: Int = 0): Option[C#DocRepr] = {
-    if (queryBson == null)
+    if (queryBson == null) {
+      if (logger.isTraceEnabled) {
+        val cs = Collection.safetyOf(dbc, safety)
+        logger.trace(dbc.getName + ".findAndRemove(" + this + "), safety=" + cs)
+        logger.trace(dbc.getName + ".findAndRemove result is null")
+      }
       None
-    else {
+    } else {
       val cs = Collection.safetyOf(dbc, safety)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".findAndRemove(" + this + "), safety=" + cs)
       val dbo = dbc.findAndModify(queryBson, projectionBson, sortBson,
                                   true, null, false, false)
+      if (logger.isTraceEnabled)
+        logger.trace(dbc.getName + ".findAndRemove result is " + dbo)
       if (dbo == null)
         None
       else
@@ -806,6 +887,6 @@ final class Query[C <: Collection] private(
         implicit witness: C <:< AssociatedCollection): Option[C#DocRepr] =
     findAndRemoveFrom(witness(coll).getDbCollection, safety, timeout)
 
-  override def toString = "Query(" + queryBson + ", " + sortBson + ", " +
-                                     projectionBson + ")"
+  override def toString = "Query(" + queryBson + ", sort=" + sortBson +
+                                 ", projection=" + projectionBson + ")"
 }

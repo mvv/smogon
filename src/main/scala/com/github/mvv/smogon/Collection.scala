@@ -21,6 +21,7 @@ import scala.collection.generic.{
          GenericSetTemplate}
 import scala.collection.{SetLike, MapLike}
 import scala.util.matching.Regex
+import org.slf4j.LoggerFactory
 import com.github.mvv.layson
 import layson.bson._
 import layson.json._
@@ -1125,6 +1126,7 @@ trait Document { document =>
     def toMap = Map[AnyRef, AnyRef]()
     def isPartialObject = false
     def markAsPartialObject() {}
+    override def toString = com.mongodb.util.JSON.serialize(this)
   }
 
   final def dbObject(doc: DocRepr) = new DocObject(doc)
@@ -1191,6 +1193,7 @@ object Safety {
 }
 
 object Collection {
+  private[smogon] val logger = LoggerFactory.getLogger(classOf[Collection])
   val DuplicateKeyRegex = """E[^\$]+\$([^\s]+).*""".r
 
   def genId(): BsonId = {
@@ -1246,6 +1249,8 @@ trait Collection extends Documents {
                        timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
     val cs = safetyOf(dbc, safety)
+    if (logger.isTraceEnabled)
+      logger.trace(dbc.getName + ".insert(" + dbo + "), safety=" + cs)
     handleErrors(dbc.insert(dbo, writeConcern(cs)))
     dbo.repr
   }
@@ -1255,6 +1260,8 @@ trait Collection extends Documents {
                      timeout: Int = 0): DocRepr = {
     val dbo = dbObject(doc)
     val cs = safetyOf(dbc, safety)
+    if (logger.isTraceEnabled)
+      logger.trace(dbc.getName + ".save(" + dbo + "), safety=" + cs)
     handleErrors(dbc.save(dbo, writeConcern(cs)))
     dbo.repr
   }
