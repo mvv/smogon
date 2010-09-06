@@ -503,6 +503,8 @@ object JsonSpec {
     def orElse(alt: D#DocRepr => D#DocRepr)(
                implicit witness: IO <:< In): OptMember[D] =
       new OptMember[D](this.asInstanceOf[Single[D, In]], alt)
+    def orDo(alt: => Unit)(implicit witness: IO <:< In): OptMember[D] =
+      this orElse (d => { alt; d })
     def ?()(implicit witness: IO <:< In): OptMember[D] = this orElse (d => d)
   }
   sealed trait Field[D <: Document, +IO <: Direction] extends Member[D, IO] {
