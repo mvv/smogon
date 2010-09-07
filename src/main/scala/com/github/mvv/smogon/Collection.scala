@@ -35,8 +35,15 @@ trait ReprBsonValue {
   type ValueRepr
   type Bson <: BsonValue
 
+  val bsonClass: Class[Bson]
+
   def fromBson(bson: Bson): ValueRepr
   def toBson(repr: ValueRepr): Bson
+
+  def toJson(value: ValueRepr) = Bson.toJson(toBson(value))
+  val fromJson: PartialFunction[JsonValue, ValueRepr] = {
+    case value => fromBson(Bson.fromJson(value, bsonClass))
+  }
 }
 
 sealed trait Documents extends Document {
@@ -233,8 +240,6 @@ trait Document { document =>
   sealed trait BasicFieldBase extends FieldBase with ReprBsonValue {
     final type ValueRepr = Repr
 
-    val bsonClass: Class[Bson]
-
     def fieldBson(value: Repr): Bson = toBson(value)
 
     def +=(value: Repr)(implicit witness: Bson <:< OptNumericBsonValue) =
@@ -410,8 +415,6 @@ trait Document { document =>
 
   sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
     final type ElemRepr = ValueRepr
-
-    val bsonClass: Class[Bson]
 
     final def elementBson(elem: ElemRepr) = toBson(elem)
 

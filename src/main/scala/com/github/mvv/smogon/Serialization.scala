@@ -62,7 +62,7 @@ object JsonSpec {
             field: F, name: String, value: JsonValue) {
         val f = field.asInstanceOf[d.BasicFieldBase]
         val r = try {
-                  f.fromBson(Bson.fromJson(value, f.bsonClass))
+                  f.fromJson(value)
                 } catch {
                   case e: Exception =>
                     throw new IllegalFieldValueException(
@@ -96,7 +96,7 @@ object JsonSpec {
         var elems = f.newArrayRepr
         array.iterator.zipWithIndex.foreach { case (value, i) =>
           val elem = try {
-                       f.fromBson(Bson.fromJson(value, f.bsonClass))
+                       f.fromJson(value)
                      } catch {
                        case e: Exception =>
                          throw new IllegalFieldValueException(
@@ -280,7 +280,7 @@ object JsonSpec {
           case DocumentField(_, field) => field match {
             case BasicField(field) =>
               val f = field.asInstanceOf[d.BasicFieldBase]
-              Some(Bson.toJson(f.toBson(f.get(dr))))
+              Some(f.toJson(f.get(dr)))
             case EmbeddingField(field) =>
               if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
                 val f = field.asInstanceOf[d.OptEmbeddingFieldBase]
@@ -292,8 +292,7 @@ object JsonSpec {
               }
             case ElementsArrayField(field) =>
               val f = field.asInstanceOf[d.ElementsArrayFieldBase]
-              Some(JsonArray(f.iterator(f.get(dr)).
-                               map(e => Bson.toJson(f.toBson(e)))))
+              Some(JsonArray(f.iterator(f.get(dr)).map(e => f.toJson(e))))
             case DocumentsArrayField(field) =>
               val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
               Some(JsonArray(f.iterator(f.get(dr)).map(f.toJson(_))))
