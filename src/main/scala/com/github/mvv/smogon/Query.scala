@@ -194,23 +194,53 @@ object ValueFilterBuilder {
     new StringFilterOps(builder)
 }
 
-sealed trait Filter[R <: Documents] {
+sealed trait Filter[-R <: Documents] {
   import Filter._
 
   def unary_!(): Filter[R]
-  def &&(filter: Filter[R]): Filter[R] = And(this, filter)
-  def ||(filter: Filter[R]): Filter[R] = Or(this, filter)
+  def &&[R1 <: R](filter: Filter[R1]): Filter[R1]
+  def ||[R1 <: R](filter: Filter[R1]): Filter[R1]
 
-  def linearize: Iterator[Filter[R]] = Iterator.single(this)
   def normalForm: Filter[R] = this
 
   def toBson: BsonObject
 }
 
 object Filter {
-  sealed trait Simple[D <: Document, F <: D#FieldBase] extends Filter[D#Root] {
+  private[smogon] final class FalseFilterException() extends RuntimeException
+
+  object EmptyFilter extends Filter[Documents] {
+    def unary_!() = EmptyFilter
+    def &&[R <: Documents](filter: Filter[R]) = filter
+    def ||[R <: Documents](filter: Filter[R]) = filter
+    def toBson = BsonObject.Empty
+  }
+  sealed trait NonEmptyFilter[-R <: Documents] extends Filter[R] {
+    def unary_!(): NonEmptyFilter[R]
+    def &&[R1 <: R](filter: NonEmptyFilter[R1]): NonEmptyFilter[R1] =
+      And(this, filter)
+    def &&[R1 <: R](filter: Filter[R1]): Filter[R1] = filter match {
+      case filter: NonEmptyFilter[_] =>
+        And(this, filter.asInstanceOf[NonEmptyFilter[R1]])
+      case _ => this
+    }
+    def ||[R1 <: R](filter: NonEmptyFilter[R1]): NonEmptyFilter[R1] =
+      Or(this, filter)
+    def ||[R1 <: R](filter: Filter[R1]): Filter[R1] = filter match {
+      case filter: NonEmptyFilter[_] =>
+        Or(this, filter.asInstanceOf[NonEmptyFilter[R1]])
+      case _ => this
+    }
+ 
+    def linearize: Iterator[NonEmptyFilter[R]] = Iterator.single(this)
+    override def normalForm: NonEmptyFilter[R] = this
+
+    final def onlyIf(flag: Boolean): Filter[R] = if (flag) this else EmptyFilter
+  }
+  sealed trait Simple[D <: Document, F <: D#FieldBase]
+               extends NonEmptyFilter[D#Root] {
     val field: F
-    def unary_!(): Filter[D#Root] = Not(this)
+    def unary_!(): NonEmptyFilter[D#Root] = Not(this)
     def operatorName: Option[String] = None
     def negationName: Option[String] = None
     def valueBson: BsonValue
@@ -234,10 +264,11 @@ object Filter {
       case None => filter.conditionBson
     }
   }
-  final case class And[R <: Documents](first: Filter[R], second: Filter[R])
-                   extends Filter[R] {
+  final case class And[R <: Documents](first: NonEmptyFilter[R],
+                                       second: NonEmptyFilter[R])
+                   extends NonEmptyFilter[R] {
     def unary_!() = Or(!first, !second)
-    override def linearize: Iterator[Filter[R]] = (first, second) match {
+    override def linearize = (first, second) match {
       case (f @ And(_, _), s @ And(_, _)) => f.linearize ++ s.linearize
       case (f @ And(_, _), s) => f.linearize ++ Iterator.single(s)
       case (f, s @ And(_, _)) => Iterator.single(f) ++ s.linearize
@@ -247,16 +278,15 @@ object Filter {
       case (f @ Or(_, _), s @ Or(_, _)) =>
         (for { c1 <- f.linearize
                c2 <- s.linearize }
-           yield And[R](c1, c2)).reduceLeft[Filter[R]](Or(_, _))
+           yield And[R](c1, c2)).reduceLeft[NonEmptyFilter[R]](Or(_, _))
       case (f @ Or(_, _), s) =>
-        f.linearize.map(And(_, s)).reduceLeft[Filter[R]](Or(_, _)) 
+        f.linearize.map(And(_, s)).reduceLeft[NonEmptyFilter[R]](Or(_, _)) 
       case (f, s @ Or(_, _)) =>
-        s.linearize.map(And(f, _)).reduceLeft[Filter[R]](Or(_, _)) 
+        s.linearize.map(And(f, _)).reduceLeft[NonEmptyFilter[R]](Or(_, _)) 
       case (f, s) => And(f, s)
     }
     def toBson = {
       import And.Context
-      var alwaysFalse = false
       val ctxs = linearize.foldLeft(Map[String, Context]()) { (m, elem) =>
         val c = elem.asInstanceOf[Simple[D, F] forSome {
                                     type D <: Document
@@ -282,17 +312,17 @@ object Filter {
                 eqTest match {
                   case Some(value) =>
                     if (bson != value)
-                      alwaysFalse = true
+                      throw new FalseFilterException
                     ctx
                   case None =>
                     regexTest.foreach { regex =>
                       bson.asInstanceOf[OptBsonStr] match {
                         case BsonNull =>
-                          alwaysFalse = true
+                          throw new FalseFilterException
                         case BsonStr(str) =>
                           val matcher = regex.pattern.matcher(str)
                           if (!matcher.matches)
-                            alwaysFalse = true
+                            throw new FalseFilterException
                       }
                     }
                     notRegexTest.foreach { regex =>
@@ -301,7 +331,7 @@ object Filter {
                         case BsonStr(str) =>
                           val matcher = regex.pattern.matcher(str)
                           if (matcher.matches)
-                            alwaysFalse = true
+                            throw new FalseFilterException
                       }
                     }
                     ctx.copy(eqTest = Some(bson),
@@ -312,11 +342,11 @@ object Filter {
                   case Some(value) =>
                     value.asInstanceOf[OptBsonStr] match {
                       case BsonNull =>
-                        alwaysFalse = true
+                        throw new FalseFilterException
                       case BsonStr(str) =>
                         val matcher = r.pattern.matcher(str)
                         if (!matcher.matches)
-                          alwaysFalse = true
+                          throw new FalseFilterException
                     }
                     ctx
                   case None => regexTest match {
@@ -332,11 +362,11 @@ object Filter {
                   case Some(value) =>
                     value.asInstanceOf[OptBsonStr] match {
                       case BsonNull =>
-                        alwaysFalse = true
+                        throw new FalseFilterException
                       case BsonStr(str) =>
                         val matcher = r.pattern.matcher(str)
                         if (matcher.matches)
-                          alwaysFalse = true
+                          throw new FalseFilterException
                     }
                     ctx
                   case None => notRegexTest match {
@@ -376,10 +406,7 @@ object Filter {
         }
         m + (fieldName -> ctx)
       }
-      if (alwaysFalse)
-        BsonObject()
-      else
-        BsonObject(ctxs.mapValues(_.toBson(this)))
+      BsonObject(ctxs.mapValues(_.toBson(this)))
     }
   }
   object And {
@@ -414,10 +441,11 @@ object Filter {
       }
     }
   }
-  final case class Or[R <: Documents](first: Filter[R], second: Filter[R])
-                   extends Filter[R] {
+  final case class Or[R <: Documents](first: NonEmptyFilter[R],
+                                      second: NonEmptyFilter[R])
+                   extends NonEmptyFilter[R] {
     def unary_!() = And(!first, !second)
-    override def linearize: Iterator[Filter[R]] = (first, second) match {
+    override def linearize = (first, second) match {
       case (f @ Or(_, _), s @ Or(_, _)) => f.linearize ++ s.linearize
       case (f @ Or(_, _), s) => f.linearize ++ Iterator.single(s)
       case (f, s @ Or(_, _)) => Iterator.single(f) ++ s.linearize
@@ -615,15 +643,14 @@ final class Query[C <: Collection] private(
   import Collection._
 
   private[smogon] def this(coll: C, filter: Filter[C]) =
-    this(coll, Some(try {
-                      filter.normalForm.toBson
-                    } catch {
-                      case _: UntranslatableQueryException[_] =>
-                        throw new UntranslatableQueryException(filter)
-                    }).map {
-                 case obj: BsonObject if obj.iterator.isEmpty => null
-                 case bson => Bson.toDBObject(bson)
-               } .get, new BasicDBObject, new BasicDBObject)
+    this(coll, try {
+                 Bson.toDBObject(filter.normalForm.toBson)
+               } catch {
+                 case _: Filter.FalseFilterException =>
+                   null
+                 case _: UntranslatableQueryException[_] =>
+                   throw new UntranslatableQueryException(filter)
+               }, new BasicDBObject, new BasicDBObject)
   private[smogon] def this(coll: C) =
     this(coll, new BasicDBObject, new BasicDBObject, new BasicDBObject)
 
