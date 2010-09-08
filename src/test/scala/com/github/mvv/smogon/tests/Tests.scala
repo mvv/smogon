@@ -33,7 +33,12 @@ class MyCollection extends DefaultReprCollection {
                   with SeqArrayField[Vector] {
     protected def seqFactory = Vector
   }
-  id | field | opt | embedded | elems
+  object docs extends DocumentsArrayFieldDD[Seq] with SeqArrayField[Vector] {
+    protected def seqFactory = Vector
+    object docField extends IntFieldD[Int]
+    docField
+  }
+  id | field | opt | embedded | elems | docs
 }
 
 object MyCollection extends MyCollection
@@ -67,7 +72,7 @@ class SimpleTest extends SpecificationWithJUnit {
   }
   
   "Number of fields must be correct" in {
-    MyCollection.fields.size must_== 5
+    MyCollection.fields.size must_== 6
   }
 
   "Setting default safety level must actually set it" in {
@@ -82,6 +87,9 @@ class SimpleTest extends SpecificationWithJUnit {
 
   "Saving must set _id" in {
     val my = MyCollection.create
+    val myDoc = MyCollection.docs.create
+    MyCollection.docs.docField.set(myDoc, 10)
+    MyCollection.docs.set(my, Vector(myDoc))
     MyCollection.saveInto(dbc, my)
     id = MyCollection.id.get(my)
     id must_!= BsonId.Zero
@@ -110,9 +118,16 @@ class SimpleTest extends SpecificationWithJUnit {
     upOpt.isDefined must_== true
   }
 
-  "Quering an embedded array field must succeed" in {
+  "Quering an embedded primitives array field must succeed" in {
     MyCollection(m => m.elems.contains(_.in(5, 20))).
       findOneIn(dbc).isDefined must_== true
+  }
+
+  "Quering an embedded documents array field must succeed" in {
+    MyCollection(m => m.docs.contains(_.docField === 10)).
+      findOneIn(dbc).isDefined must_== true
+    MyCollection(m => m.docs.contains(_.docField === 11)).
+      findOneIn(dbc).isDefined must_== false
   }
 
   "UpdateOne must return true with upsert" in {

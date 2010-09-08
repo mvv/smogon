@@ -493,7 +493,8 @@ object Filter {
   }
   final case class Contains[D <: Document, F <: D#DocumentsArrayFieldBase](
                      field: F, filter: Filter[F]) extends Simple[D, F] {
-    def valueBson = throw new UnsupportedOperationException
+    override def operatorName = Some("$elemMatch")
+    def valueBson = filter.normalForm.toBson
   }
 }
 

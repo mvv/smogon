@@ -430,18 +430,19 @@ trait Document { document =>
 
     final def elementBson(elem: ElemRepr) = toBson(elem)
 
-    final def contains(filter: this.type =>
-                               Filter[this.type]): Filter[Doc#Root] =
-      Filter.Contains[Doc, this.type](this, filter(this))
+    final def contains(filter: this.type => Filter[d.type] forSome {
+                                 val d: this.type
+                               }): Filter[Doc#Root] =
+      Filter.Contains[Doc, this.type](
+        this, filter(this).asInstanceOf[Filter[this.type]])
 
     final def foreach[IO <: Direction](
                 spec: this.type => JsonSpec[d.type, IO]
-                                     forSome { val d: this.type }) =
+                  forSome { val d: this.type }) =
       JsonSpec.InDocuments[Doc, this.type, IO](
         jsonMember, this, spec(this).asInstanceOf[JsonSpec[this.type, IO]],
         identity)
-    final def transform(
-                trans: Iterator[DocRepr] => Iterator[DocRepr]) =
+    final def transform(trans: Iterator[DocRepr] => Iterator[DocRepr]) =
       new JsonSpec.Transformed[Doc, this.type](jsonMember, this, trans)
   }
 
