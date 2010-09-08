@@ -25,7 +25,7 @@ sealed trait InOut extends In with Out
 
 sealed trait JsonSpec[D <: Document, +IO <: Direction] {
   def jsonDocument: D
-  def jsonMembers: Iterator[JsonSpec.Single[D, IO]] 
+  def jsonMembers: Iterator[JsonSpec.Single[D, IO]]
 }
 
 object JsonSpec {
@@ -273,7 +273,7 @@ object JsonSpec {
           case spec => Some(spec)
         }) .flatMap {
           case ConvTo(_, field, conv) =>
-            val f = field.asInstanceOf[d.BasicFieldBase]
+            val f = field.asInstanceOf[d.FieldBase]
             conv(f.get(dr))
           case CustomFieldTo(_, _, conv) =>
             conv(dr)
