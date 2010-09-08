@@ -4,3 +4,6 @@
 target
 settings.xml
 nbactions.xml
+*.iml
+*.ipr
+*.iws
