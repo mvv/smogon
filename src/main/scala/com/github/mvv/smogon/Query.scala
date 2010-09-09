@@ -268,12 +268,13 @@ object Filter {
                                        second: NonEmptyFilter[R])
                    extends NonEmptyFilter[R] {
     def unary_!() = Or(!first, !second)
-    override def linearize = (first, second) match {
-      case (f @ And(_, _), s @ And(_, _)) => f.linearize ++ s.linearize
-      case (f @ And(_, _), s) => f.linearize ++ Iterator.single(s)
-      case (f, s @ And(_, _)) => Iterator.single(f) ++ s.linearize
-      case _ => Iterator(first, second)
-    }
+    override def linearize: Iterator[NonEmptyFilter[R]] =
+      (first, second) match {
+        case (f @ And(_, _), s @ And(_, _)) => f.linearize ++ s.linearize
+        case (f @ And(_, _), s) => f.linearize ++ Iterator.single(s)
+        case (f, s @ And(_, _)) => Iterator.single(f) ++ s.linearize
+        case _ => Iterator(first, second)
+      }
     override def normalForm = (first.normalForm, second.normalForm) match {
       case (f @ Or(_, _), s @ Or(_, _)) =>
         (for { c1 <- f.linearize
@@ -445,12 +446,13 @@ object Filter {
                                       second: NonEmptyFilter[R])
                    extends NonEmptyFilter[R] {
     def unary_!() = And(!first, !second)
-    override def linearize = (first, second) match {
-      case (f @ Or(_, _), s @ Or(_, _)) => f.linearize ++ s.linearize
-      case (f @ Or(_, _), s) => f.linearize ++ Iterator.single(s)
-      case (f, s @ Or(_, _)) => Iterator.single(f) ++ s.linearize
-      case _ => Iterator(first, second)
-    }
+    override def linearize: Iterator[NonEmptyFilter[R]] =
+      (first, second) match {
+        case (f @ Or(_, _), s @ Or(_, _)) => f.linearize ++ s.linearize
+        case (f @ Or(_, _), s) => f.linearize ++ Iterator.single(s)
+        case (f, s @ Or(_, _)) => Iterator.single(f) ++ s.linearize
+        case _ => Iterator(first, second)
+      }
     override def normalForm = Or(first.normalForm, second.normalForm)
     def toBson =
       BsonObject("$or" -> BsonArray(linearize.map(_.toBson).toSeq: _*))
@@ -526,23 +528,40 @@ object Filter {
   }
 }
 
-sealed trait Update[R <: Documents] {
-  def &&(update: Update[R]): Update[R]
+sealed trait Update[-R <: Documents] {
+  def &&[R1 <: R](update: Update[R1]): Update[R1]
   def toBson: BsonObject
+  final def onlyIf(flag: Boolean): Update[R] = if (flag) this else EmptyUpdate
+}
+
+object EmptyUpdate extends Update[Documents] {
+  def &&[R <: Documents](update: Update[R]) = update
+  def toBson = BsonObject.Empty
 }
 
 object Update {
-  sealed trait Single[R <: Documents] extends Update[R] {
-    def &&(update: Update[R]): Update[R] = update match {
-      case update: Single[_] => Many(Vector(this, update))
+  sealed trait Single[-R <: Documents] extends Update[R] {
+    final def &&[R1 <: R](update: Single[R1]): Update[R1] = 
+      Many(Vector(this, update))
+    final def &&[R1 <: R](update: Many[R1]): Update[R1] = 
+      Many(this +: update.updates)
+    final def &&[R1 <: R](update: Update[R1]): Update[R1] = update match {
+      case update: Single[_] =>
+        Many(Vector(this, update.asInstanceOf[Single[R1]]))
       case Many(updates) => Many(this +: updates)
+      case EmptyUpdate => this
     }
   }
-  final case class Many[R <: Documents](
+  final case class Many[-R <: Documents](
                      updates: Seq[Single[R]]) extends Update[R] {
-    def &&(update: Update[R]): Update[R] = update match {
+    def &&[R1 <: R](update: Single[R1]): Update[R1] = 
+      Many(this.updates :+ update)
+    def &&[R1 <: R](update: Many[R1]): Update[R1] = 
+      Many(this.updates ++ update.updates)
+    def &&[R1 <: R](update: Update[R1]): Update[R1] = update match {
       case update: Single[_] => Many(this.updates :+ update)
       case Many(updates) => Many(this.updates ++ updates)
+      case EmptyUpdate => this
     }
     def toBson = updates.foldLeft(new MapBsonObject()) { case (obj, update) =>
       update.toBson.iterator.foldLeft(obj) { case (obj, (code, op)) =>
@@ -716,11 +735,16 @@ final class Query[C <: Collection] private(
       if (logger.isTraceEnabled)
         logger.trace(dbc.getName + ".update(" + this + ", " + updateBson +
                      "), safety=" + cs)
-      val wr = dbc.update(queryBson, updateBson, false, true, writeConcern(cs))
-      val result = cs match {
-        case _: Safety.Safe => wr.getN
-        case _ => 0
-      }
+      val result = if (updateBson.keySet.isEmpty)
+                     dbc.count(queryBson)
+                   else {
+                     val wr = dbc.update(queryBson, updateBson, false, true,
+                                         writeConcern(cs))
+                     cs match {
+                       case _: Safety.Safe => wr.getN
+                       case _ => 0
+                     }
+                   }
       if (logger.isTraceEnabled)
         logger.trace(dbc.getName + ".update result is " + result)
       result
@@ -750,12 +774,18 @@ final class Query[C <: Collection] private(
       if (logger.isTraceEnabled)
         logger.trace(dbc.getName + ".updateOne(" + this + ", " + updateBson +
                      "), upsert=" + upsert + ", safety=" + cs)
-      val wr = dbc.update(if (queryBson == null) falseQueryBson else queryBson,
-                          updateBson, upsert, false, writeConcern(cs))
-      val result = cs match {
-        case _: Safety.Safe => wr.getN == 1
-        case _ => false
-      }
+      val result = if (updateBson.keySet.isEmpty && !upsert)
+                     dbc.findOne(queryBson, projectionBson) != null
+                   else {
+                     val wr = dbc.update(
+                                if (queryBson == null) falseQueryBson
+                                else queryBson, updateBson, upsert, false,
+                                writeConcern(cs))
+                     cs match {
+                       case _: Safety.Safe => wr.getN == 1
+                       case _ => false
+                     }
+                   }
       if (logger.isTraceEnabled)
         logger.trace(dbc.getName + ".updateOne result is " + result)
       result
@@ -789,9 +819,12 @@ final class Query[C <: Collection] private(
         logger.trace(dbc.getName + ".findAndUpdate(" + this + ", " +
                      updateBson + "), upsert=" + upsert +
                      ", returnUpdated=" + returnUpdated + ", safety=" + cs)
-      val dbo = dbc.findAndModify(if (queryBson == null) falseQueryBson
-                                  else queryBson, projectionBson, sortBson,
-                                  false, updateBson, returnUpdated, upsert)
+      val dbo = if (updateBson.keySet.isEmpty && !upsert)
+                  dbc.findOne(queryBson, projectionBson)
+                else
+                  dbc.findAndModify(if (queryBson == null) falseQueryBson
+                                    else queryBson, projectionBson, sortBson,
+                                    false, updateBson, returnUpdated, upsert)
       if (logger.isTraceEnabled)
         logger.trace(dbc.getName + ".findAndUpdate result is " + dbo)
       if (dbo == null)
