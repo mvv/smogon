@@ -407,11 +407,10 @@ object JsonSpec {
            implicit witness: IO <:< Out): NoDefault[D, Out]
     def <<(spec: NoDefault[D, In])(
            implicit witness: IO <:< In): NoDefault[D, In]
-    def >>!(notFields: D => Seq[_ <: D#FieldBase])(
+    def >>!(notFields: D#FieldBase*)(
             implicit witness: IO <:< Out) =
-      new RestOut(notFields(jsonDocument).toSet[D#FieldBase],
-                  this.asInstanceOf[NoDefault[D, Out]])
-    def >>*()(implicit witness: IO <:< Out) = this >>! (d => Nil)
+      new RestOut(notFields.toSet, this.asInstanceOf[NoDefault[D, Out]])
+    def >>*()(implicit witness: IO <:< Out) = this >>! (Nil: _*)
     def <<!(notFields: D#FieldBase*)(implicit witness: IO <:< In) =
       new RestIn(notFields.toSet, false, this.asInstanceOf[NoDefault[D, In]])
     def <<!#(notFields: D#FieldBase*)(implicit witness: IO <:< In) =
