@@ -33,55 +33,82 @@ object JsonSpec {
   object Ignore extends Verdict
   object Raise extends Verdict
 
+  sealed trait Path {
+    def toPrefixString: String
+    final def :+(name: String) = FieldPath(this, name)
+  }
+  object EmptyPath extends Path {
+    def toPrefixString = ""
+    override def toString = "JsonSpec.EmptyPath"
+  }
+  sealed trait NonEmptyPath extends Path {
+    def prefix: Path
+    def toPrefixString = toString + '.'
+  }
+  final case class FieldPath(prefix: Path, name: String) extends NonEmptyPath {
+    override def toString = prefix.toPrefixString + name
+    def :+(index: Int) = ElementPath(this, index)
+  }
+  final case class ElementPath(prefix: FieldPath, index: Int)
+                   extends NonEmptyPath {
+    override def toString = prefix.toString + '[' + index + ']'
+  }
+
   sealed class ReadingException(message: String, cause: Throwable)
-                 extends RuntimeException(message, cause) {
+               extends RuntimeException(message, cause) {
     def this(message: String) = this(message, null)
   }
-  case class UnexpectedFieldException(name: String)
-             extends ReadingException("Unexpected field '" + name + "'")
-  case class MissingFieldException(name: String)
-             extends ReadingException("Mandatory field '" + name +
-                                      "' is missing")
-  case class IllegalFieldValueException(name: String, value: JsonValue,
-                                        cause: Throwable)
-        extends ReadingException(
-                  "Field '" + name + "' has illegal value '" +
-                  value.serialize.mkString + "'") {
-    def this(name: String, value: JsonValue) = this(name, value, null)
+  final case class UnexpectedFieldException(path: NonEmptyPath)
+                   extends ReadingException("Unexpected field '" + path + "'")
+  final case class MissingFieldException(path: NonEmptyPath)
+                   extends ReadingException(
+                             "Mandatory field '" + path + "' is missing")
+  final case class IllegalFieldValue(path: NonEmptyPath,
+                                     value: JsonValue, error: String) {
+    def getMessage =
+      "Field '" + path + "' has illegal value " + value + ": " + error
   }
+  final case class IllegalFieldsValuesException(errors: Seq[IllegalFieldValue])
+                   extends ReadingException(
+                             errors.map(_.getMessage).mkString("\n"))
 
   final class Reader[D <: Document](spec: JsonSpec[D, In])
               extends (JsonObject => D#DocRepr) {
     private def process[DD <: Document](
-                 path: Seq[String], jo: JsonObject, spec: JsonSpec[DD, In],
-                 repr: DD#DocRepr): DD#DocRepr = {
+                  path: Path, jo: JsonObject, spec: JsonSpec[DD, In],
+                  repr: DD#DocRepr): (DD#DocRepr, Seq[IllegalFieldValue]) = {
       val d = spec.jsonDocument
       var doc = repr.asInstanceOf[d.DocRepr]
 
       def basicField[F <: DDD#BasicFieldBase forSome { type DDD <: Document }](
-            field: F, name: String, value: JsonValue) {
+            field: F, name: String, value: JsonValue) = {
         val f = field.asInstanceOf[d.BasicFieldBase]
-        val r = try {
-                  f.fromJson(value)
-                } catch {
-                  case e: Exception =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value, e)
-                }
-        doc = f.set(doc, r)
+        val fullPath = path :+ name
+        try {
+          val r = f.fromJson(value)
+          doc = f.set(doc, r)
+          f.validator(r).errors.map(IllegalFieldValue(fullPath, value, _))
+        } catch {
+          case e: Exception =>
+            Vector(IllegalFieldValue(fullPath, value, e.getMessage))
+        }
       }
       def embeddingFieldWith[F <: DD#EmbeddingFieldBase](
-            field: F, name: String, obj: JsonObject, spec: JsonSpec[F, In]) {
+            field: F, name: String, obj: JsonObject, spec: JsonSpec[F, In]) = {
         val f = field.asInstanceOf[d.EmbeddingFieldBase]
-        doc = f.set(doc, process[f.type](
-                           path :+ name, obj,
-                           spec.asInstanceOf[JsonSpec[f.type, In]]))
+        val (r, errors) = process[f.type](
+                            path :+ name, obj,
+                            spec.asInstanceOf[JsonSpec[f.type, In]])
+        doc = f.set(doc, r)
+        errors
       }
       def embeddingField[F <: DDD#EmbeddingFieldBase
                                 forSome { type DDD <: Document }](
-            field: F, name: String, obj: JsonObject) {
+            field: F, name: String, obj: JsonObject) = {
         val f = field.asInstanceOf[d.EmbeddingFieldBase]
-        doc = f.set(doc, process[f.type](path :+ name, obj, f.jsonSpec))
+        val (r, errors) = process[f.type](path :+ name, obj, f.jsonSpec)
+        doc = f.set(doc, r)
+        errors
       }
       def optEmbeddingField[F <: DDD#OptEmbeddingFieldBase
                                    forSome { type DDD <: Document }](
@@ -91,75 +118,89 @@ object JsonSpec {
       }
       def elementsField[F <: DDD#ElementsArrayFieldBase
                                forSome { type DDD <: Document }](
-            field: F, name: String, array: JsonArray) {
+            field: F, name: String,
+            array: JsonArray): Seq[IllegalFieldValue] = {
         val f = field.asInstanceOf[d.ElementsArrayFieldBase]
+        val fullPath = path :+ name
         var elems = f.newArrayRepr
-        array.iterator.zipWithIndex.foreach { case (value, i) =>
-          val elem = try {
-                       f.fromJson(value)
-                     } catch {
-                       case e: Exception =>
-                         throw new IllegalFieldValueException(
-                           (path :+ name).mkString(".") + "[" + i + "]",
-                           value, e)
-                     }
-          elems = f.append(elems, elem)
+        val errors = array.iterator.zipWithIndex.
+                       foldLeft(Vector[IllegalFieldValue]()) {
+          case (errors, (value, i)) =>
+            try {
+              val elem = f.fromJson(value)
+              elems = f.append(elems, elem)
+              errors ++ f.validator(elem).errors.map(
+                          IllegalFieldValue(fullPath :+ i, value, _))
+            } catch {
+              case e: Exception =>
+                errors :+ IllegalFieldValue(fullPath :+ i, value, e.getMessage)
+            }
         }
         doc = f.set(doc, elems)
+        errors
       }
       def documentsFieldWith[F <: DDD#DocumentsArrayFieldBase
                                     forSome { type DDD <: Document }](
-            field: F, name: String, array: JsonArray, spec: JsonSpec[F, In]) {
+            field: F, name: String, array: JsonArray, spec: JsonSpec[F, In]) = {
         val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
-        var elems = f.newArrayRepr
-        array.iterator.zipWithIndex.foreach {
-          case (obj: JsonObject, _) =>
-            val elem = process[f.type](
-                         path :+ name, obj,
-                         spec.asInstanceOf[JsonSpec[f.type, In]])
-            elems = f.append(elems, elem)
-          case (value, i) =>
-            throw new IllegalFieldValueException(
-                        (path :+ name).mkString(".") + "[" + i + "]", value)
+        val fullPath = path :+ name
+        val (elems, errors) = array.iterator.zipWithIndex.
+                                foldLeft((f.newArrayRepr,
+                                          Vector[IllegalFieldValue]())) {
+          case ((elems, errors), (obj: JsonObject, i)) =>
+            val (elem, elemErrors) =
+              process[f.type](fullPath :+ i, obj,
+                              spec.asInstanceOf[JsonSpec[f.type, In]])
+            (f.append(elems, elem), errors ++ elemErrors)
+          case ((elems, errors), (value, i)) =>
+            (elems, errors :+ IllegalFieldValue(fullPath :+ i, value,
+                                                "Not a JSON document"))
         }
         doc = f.set(doc, elems)
+        errors
       }
       def documentsField[F <: DDD#DocumentsArrayFieldBase
                                 forSome { type DDD <: Document }](
-            field: F, name: String, array: JsonArray) {
+            field: F, name: String, array: JsonArray) = {
         val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
         documentsFieldWith[f.type](f, name, array, f.jsonSpec)
       }
       def customEmbedding(
-            name: String, obj: JsonObject, spec: NoDefault[DD, In]) {
-        doc = process[d.type](
-                path :+ name, obj,
-                spec.asInstanceOf[NoDefault[d.type, In]], doc)
+            name: String, obj: JsonObject, spec: NoDefault[DD, In]) = {
+        val (updatedDoc, errors) = process[d.type](
+                                     path :+ name, obj,
+                                     spec.asInstanceOf[NoDefault[d.type, In]],
+                                     doc)
+        doc = updatedDoc
+        errors
       }
       def liftedFromField[F <: DD#EmbeddingFieldBase](
-            field: F, name: String, value: JsonValue, spec: Single[F, In]) {
+            field: F, name: String, value: JsonValue, spec: Single[F, In]) = {
         val f = field.asInstanceOf[d.EmbeddingFieldBase]
-        val r = process[f.type](path, JsonObject(name -> value),
-                                spec.asInstanceOf[Single[f.type, In]],
-                                f.get(doc))
+        val (r, errors) = process[f.type](
+                            path, JsonObject(name -> value),
+                            spec.asInstanceOf[Single[f.type, In]], f.get(doc))
         doc = f.set(doc, r)
+        errors
       }
       def convField[F <: DDD#FieldBase forSome { type DDD <: Document }](
             field: F, name: String, conv: PartialFunction[JsonValue, F#Repr],
-            value: JsonValue) {
+            value: JsonValue) = {
         val f = field.asInstanceOf[d.FieldBase]
-        val r = try {
-                  conv(value).asInstanceOf[f.Repr]
-                } catch {
-                  case e: Exception =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value, e)
-                }
-        doc = f.set(doc, r)
+        val fullPath = path :+ name
+        try {
+          val r = conv(value).asInstanceOf[f.Repr]
+          doc = f.set(doc, r)
+          Vector.empty
+        } catch {
+          case e: Exception =>
+            Vector(IllegalFieldValue(fullPath, value, e.getMessage))
+        }
       }
 
       val hl = spec.asInstanceOf[HasLookup[DD, In]]
       var seen = Set[String]()
+      var errors = Vector[IllegalFieldValue]()
       jo.iterator.foreach { case (name, value) =>
         hl.jsonMemberSpec(name) match {
           case Right(s) =>
@@ -169,68 +210,68 @@ object JsonSpec {
               case _ => s
             }) match {
               case _: IgnoreInput[_, _] =>
-                throw new UnexpectedFieldException((path :+ name).mkString("."))
+                throw new UnexpectedFieldException(path :+ name)
               case ConvFrom(name, field, conv) =>
-                convField(field, name, conv, value)
+                errors ++= convField(field, name, conv, value)
               case DocumentField(_, BasicField(field)) =>
-                basicField(field, name, value)
+                errors ++= basicField(field, name, value)
               case DocumentField(_, EmbeddingField(field)) =>
                 (value, field) match {
                   case (obj: JsonObject, field) =>
-                    embeddingField(field, name, obj)
+                    errors ++= embeddingField(field, name, obj)
                   case (JsonNull, OptEmbeddingField(field)) =>
                     optEmbeddingField(field, name)
                   case _ =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value)
+                    errors :+= IllegalFieldValue(path :+ name, value,
+                                                 "Not a JSON document")
                 }
               case DocumentField(_, ElementsArrayField(field)) =>
                 value match {
                   case array: JsonArray =>
-                    elementsField(field, name, array)
+                    errors ++= elementsField(field, name, array)
                   case _ =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value)
+                    errors :+= IllegalFieldValue(path :+ name, value,
+                                                 "Not a JSON array")
                 }
               case DocumentField(_, DocumentsArrayField(field)) =>
                 value match {
                   case array: JsonArray =>
-                    documentsField(field, name, array)
+                    errors ++= documentsField(field, name, array)
                   case _ =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value)
+                    errors :+= IllegalFieldValue(path :+ name, value,
+                                                 "Not a JSON array")
                 }
               case InEmbedding(_, field, spec) =>
                 (value, field) match {
                   case (obj: JsonObject, field) =>
-                    embeddingFieldWith(field, name, obj, spec)
+                    errors ++= embeddingFieldWith(field, name, obj, spec)
                   case (JsonNull, OptEmbeddingField(field)) =>
                     optEmbeddingField(field, name)
                   case _ =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value)
+                    errors :+= IllegalFieldValue(path :+ name, value,
+                                                 "Not a JSON document")
                 }
               case InDocuments(_, field, spec, _) =>
                 value match {
                   case array: JsonArray =>
-                    documentsFieldWith(field, name, array, spec)
+                    errors ++= documentsFieldWith(field, name, array, spec)
                   case _ =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value)
+                    errors :+= IllegalFieldValue(path :+ name, value,
+                                                 "Not a JSON array")
                 }
               case InCustomEmbedding(_, spec) =>
                 value match {
                   case obj: JsonObject =>
-                    customEmbedding(name, obj, spec)
+                    errors ++= customEmbedding(name, obj, spec)
                   case _ =>
-                    throw new IllegalFieldValueException(
-                                (path :+ name).mkString("."), value)
+                    errors :+= IllegalFieldValue(path :+ name, value,
+                                                 "Not a JSON document")
                 }
               case Lifted(field, spec) =>
-                liftedFromField(field, name, value, spec)
+                errors ++= liftedFromField(field, name, value, spec)
             }
           case Left(Raise) =>
-            throw new UnexpectedFieldException((path :+ name).mkString("."))
+            throw new UnexpectedFieldException(path :+ name)
           case Left(Ignore) =>
         }
       }
@@ -243,22 +284,27 @@ object JsonSpec {
             case OptMember(_, alt) =>
               doc = alt(doc).asInstanceOf[d.DocRepr]
             case _ =>
-              throw new MissingFieldException(
-                          (path :+ single.jsonMember).mkString("."))
+              throw new MissingFieldException(path :+ single.jsonMember)
           }
         }
       }
-      doc
+      (doc, errors)
     }
 
     private def process[DD <: Document](
-                 path: Seq[String],
-                 jo: JsonObject, spec: JsonSpec[DD, In]): DD#DocRepr = {
+                  path: Path, jo: JsonObject,
+                  spec: JsonSpec[DD, In]): (DD#DocRepr,
+                                            Seq[IllegalFieldValue]) = {
       var doc = spec.jsonDocument.create
       process(path, jo, spec, doc)
     }
 
-    def apply(jo: JsonObject): D#DocRepr = process(Vector.empty, jo, spec)
+    def apply(jo: JsonObject): D#DocRepr = {
+      val (result, errors) = process(EmptyPath, jo, spec)
+      if (!errors.isEmpty)
+        throw new IllegalFieldsValuesException(errors)
+      result
+    }
   }
 
   final class Writer[D <: Document](spec: JsonSpec[D, Out])

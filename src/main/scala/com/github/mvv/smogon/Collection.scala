@@ -44,6 +44,8 @@ trait ReprBsonValue {
   val fromJson: PartialFunction[JsonValue, ValueRepr] = {
     case value => fromBson(Bson.fromJson(value, bsonClass))
   }
+
+  val validator: Validator[ValueRepr] = Validator.Ok
 }
 
 sealed trait Documents extends Document {
