@@ -98,6 +98,20 @@ object Validator {
                                else
                                  Valid
   }
+  object Trimmed extends Validator[String] {
+    def apply(value: String) = {
+      val len = value.length
+      if (len > 0) {
+        if (value(0).isSpaceChar)
+          Invalid("Begins with a space character")
+        else if (value(len - 1).isSpaceChar)
+          Invalid("Ends with a space character")
+        else
+          Valid
+      } else
+        Valid
+    }
+  }
   sealed case class IsURI(schemas: String*) extends Validator[String] {
     def apply(value: String) =
       try {
