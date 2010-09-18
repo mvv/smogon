@@ -18,8 +18,9 @@ package com.github.mvv.smogon
 
 import scala.collection.generic.{
          SeqFactory, SetFactory, MapFactory, GenericTraversableTemplate,
-         GenericSetTemplate}
-import scala.collection.{SetLike, MapLike}
+         GenericSetTemplate, SortedSetFactory, SortedMapFactory}
+import scala.collection.{SetLike, MapLike, SortedSet, SortedSetLike,
+                         SortedMap, SortedMapLike}
 import scala.util.matching.Regex
 import org.slf4j.LoggerFactory
 import com.github.mvv.layson
@@ -379,7 +380,7 @@ trait Document { document =>
         extends AbstractField with ArrayFieldBase {
     type Repr >: S[ElemRepr] <: Seq[ElemRepr]
 
-    protected def seqFactory: SeqFactory[S]
+    protected val seqFactory: SeqFactory[S]
 
     def newArrayRepr(): Repr = seqFactory.empty[ElemRepr]
     def append(repr: Repr, value: ElemRepr): Repr =
@@ -392,7 +393,7 @@ trait Document { document =>
         extends AbstractField with ArrayFieldBase {
     type Repr >: S[ElemRepr] <: Set[ElemRepr]
 
-    protected def setFactory: SetFactory[S]
+    protected val setFactory: SetFactory[S]
 
     def newArrayRepr(): Repr = setFactory.empty[ElemRepr]
     def append(repr: Repr, value: ElemRepr): Repr =
@@ -405,12 +406,42 @@ trait Document { document =>
     type Key
     type Repr >: M[Key, ElemRepr] <: Map[Key, ElemRepr]
 
-    protected def mapFactory: MapFactory[M]
+    protected val mapFactory: MapFactory[M]
     def elemKey(repr: ElemRepr): Key
 
     def newArrayRepr(): Repr = mapFactory.empty[Key, ElemRepr]
     def append(repr: Repr, value: ElemRepr): Repr =
       ((mapFactory.newBuilder[Key, ElemRepr] ++= repr) +=
+       (elemKey(value) -> value)).result
+    def iterator(repr: Repr): Iterator[ElemRepr] = repr.valuesIterator
+  }
+
+  trait SortedSetArrayField[S[X] <: SortedSet[X] with SortedSetLike[X, S[X]]]
+        extends AbstractField with ArrayFieldBase {
+    type Repr >: S[ElemRepr] <: SortedSet[ElemRepr]
+
+    protected val elemOrdering: Ordering[ElemRepr]
+    protected val setFactory: SortedSetFactory[S]
+
+    def newArrayRepr(): Repr = setFactory.empty[ElemRepr](elemOrdering)
+    def append(repr: Repr, value: ElemRepr): Repr =
+      ((setFactory.newBuilder[ElemRepr](elemOrdering) ++= repr) += value).result
+    def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
+  }
+
+  trait SortedMapArrayField[
+          M[K, V] <: SortedMap[K, V] with SortedMapLike[K, V, M[K, V]]]
+        extends AbstractField with ArrayFieldBase {
+    type Key
+    type Repr >: M[Key, ElemRepr] <: SortedMap[Key, ElemRepr]
+
+    protected val keyOrdering: Ordering[Key]
+    protected val mapFactory: SortedMapFactory[M]
+    def elemKey(repr: ElemRepr): Key
+
+    def newArrayRepr(): Repr = mapFactory.empty[Key, ElemRepr](keyOrdering)
+    def append(repr: Repr, value: ElemRepr): Repr =
+      ((mapFactory.newBuilder[Key, ElemRepr](keyOrdering) ++= repr) +=
        (elemKey(value) -> value)).result
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.valuesIterator
   }

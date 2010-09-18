@@ -31,10 +31,10 @@ class MyCollection extends DefaultReprCollection {
   }
   object elems extends IntArrayFieldD[Int, Seq]
                   with SeqArrayField[Vector] {
-    protected def seqFactory = Vector
+    protected val seqFactory = Vector
   }
   object docs extends DocumentsArrayFieldDD[Seq] with SeqArrayField[Vector] {
-    protected def seqFactory = Vector
+    protected val seqFactory = Vector
     object docField extends IntFieldD[Int]
     docField
   }
