@@ -183,12 +183,12 @@ trait Document { document =>
     }
 
     def ===(value: Repr) = Filter.Eq[Doc, this.type](this, value)
-    def !==(value: Repr) = !(this === value)
+    def !==(value: Repr) = Filter.Not[Doc, this.type](this === value)
     def in(values: Set[Repr]): Filter.In[Doc, this.type] =
       Filter.In[Doc, this.type](this, values)
     def in(values: Repr*): Filter.In[Doc, this.type] = in(values.toSet)
-    def notIn(values: Set[Repr]) = !(this in values)
-    def notIn(values: Repr*) = !(this in values.toSet)
+    def notIn(values: Set[Repr]) = Filter.Not[Doc, this.type](this in values)
+    def notIn(values: Repr*) = Filter.Not[Doc, this.type](this in values.toSet)
 
     def =#(value: Repr) = Update.SetTo[Doc, this.type](this, value)
 
@@ -256,8 +256,8 @@ trait Document { document =>
                   field: F)(implicit witness: F#Bson <:< OptSimpleBsonValue) {
       def <(value: F#Repr) = Filter.Less[F#Doc, F](field, value)
       def <=(value: F#Repr) = Filter.LessOrEq[F#Doc, F](field, value)
-      def >(value: F#Repr) = !(this <= value)
-      def >=(value: F#Repr) = !(this < value)
+      def >(value: F#Repr) = Filter.Not[F#Doc, F](this <= value)
+      def >=(value: F#Repr) = Filter.Not[F#Doc, F](this < value)
     }
 
     implicit def basicFieldOps[F <: BasicFieldBase](
@@ -269,7 +269,7 @@ trait Document { document =>
                   field: F, devisor: F#Repr)(
                   implicit witness: F#Bson <:< OptIntegralBsonValue) {
       def ===(result: F#Repr) = Filter.Mod[F#Doc, F](field, devisor, result)
-      def !==(result: F#Repr) = !(this === result)
+      def !==(result: F#Repr) = Filter.Not[F#Doc, F](this === result)
     }
 
     final class IntegralFieldOps[F <: BasicFieldBase] private[BasicFieldBase](
@@ -286,7 +286,7 @@ trait Document { document =>
     final class StringFieldOps[F <: BasicFieldBase] private[BasicFieldBase](
                   field: F)(implicit witness: F#Bson <:< OptBsonStr) {
       def =~(regex: Regex) = Filter.Match[F#Doc, F](field, regex)
-      def !~(regex: Regex) = !(this =~ regex)
+      def !~(regex: Regex) = Filter.Not[F#Doc, F](this =~ regex)
     }
 
     implicit def stringFieldOps[F <: BasicFieldBase](
