@@ -624,7 +624,7 @@ object Update {
              field.elementBson(values.head.asInstanceOf[field.ElemRepr])
            else
              BsonObject("$each" ->
-               BsonArray(values.asInstanceOf[Seq[field.ElemRepr]].
+               BsonArray(values.toSeq.asInstanceOf[Seq[field.ElemRepr]].
                            map(field.elementBson(_)): _*)))))
   }
   final case class Pull[D <: Document, F <: D#ArrayFieldBase](
