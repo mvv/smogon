@@ -301,8 +301,9 @@ trait Document { document =>
     final type DocRepr = Repr
 
     def default = create
-    final def fieldBson(value: Repr): BsonObject =
-      BsonObject(fields.map(f => f.fieldName -> f.fieldBson(f.get(value))).toMap)
+    def fieldBson(value: Repr): OptBsonObject =
+      BsonObject(
+        fields.map(f => f.fieldName -> f.fieldBson(f.get(value))).toMap)
 
     def enter[IO <: Direction](
           spec: this.type => JsonSpec[d.type, IO]
@@ -340,12 +341,20 @@ trait Document { document =>
           new JsonSpec.Lifted[Doc, this.type, IO](
                 this, s.asInstanceOf[JsonSpec.Single[this.type, IO]])
       }
-    }
+  }
+
+  sealed trait MandatoryEmbeddingFieldBase extends EmbeddingFieldBase {
+    final override def fieldBson(value: Repr): BsonObject =
+      super.fieldBson(value).asInstanceOf[BsonObject]
+  }
 
   sealed trait OptEmbeddingFieldBase extends EmbeddingFieldBase {
     protected def nullDocRepr: DocRepr
     def isNull(repr: DocRepr): Boolean
-    final override def default = nullDocRepr
+    override def default = nullDocRepr
+    final override def fieldBson(value: Repr): OptBsonObject =
+      if (isNull(value)) BsonNull
+      else super.fieldBson(value)
   }
 
   sealed trait ArrayFieldBase extends FieldBase {
@@ -446,7 +455,8 @@ trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.valuesIterator
   }
 
-  sealed trait ElementsArrayFieldBase extends ArrayFieldBase with ReprBsonValue {
+  sealed trait ElementsArrayFieldBase extends ArrayFieldBase
+                                         with ReprBsonValue {
     final type ElemRepr = ValueRepr
 
     final def elementBson(elem: ElemRepr) = toBson(elem)
@@ -757,24 +767,24 @@ trait Document { document =>
 
   abstract class AbstractEmbeddingField(name: String)
                    extends AbstractField(name)
-                      with EmbeddingFieldBase
+                      with MandatoryEmbeddingFieldBase
 
   abstract class EmbeddingField[R](
                    getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
                    name: String = null)
                  extends Field(getter, setter, name)
-                    with EmbeddingFieldBase
+                    with MandatoryEmbeddingFieldBase
 
   abstract class EmbeddingFieldM[R](
                    getter: DocRepr => R, setter: (DocRepr, R) => Unit,
                    name: String = null)
                  extends FieldM(getter, setter, name)
-                    with EmbeddingFieldBase
+                    with MandatoryEmbeddingFieldBase
 
   abstract class EmbeddingFieldD[R](name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
-                    with EmbeddingFieldBase {
+                    with MandatoryEmbeddingFieldBase {
     final type Repr = R
   }
 
@@ -782,10 +792,14 @@ trait Document { document =>
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
-                    with EmbeddingFieldBase {
+                    with MandatoryEmbeddingFieldBase {
     final type Repr = DefaultDocRepr
     final protected def newDocRepr() = new DefaultDocRepr
   }
+
+  abstract class AbstractOptEmbeddingField(name: String)
+                   extends AbstractField(name)
+                      with OptEmbeddingFieldBase
 
   abstract class OptEmbeddingField[R](
                    getter: DocRepr => R, setter: (DocRepr, R) => DocRepr,
@@ -1094,14 +1108,14 @@ trait Document { document =>
             null
           else
             Bson.toRaw(bson)
+        case field: MandatoryEmbeddingFieldBase =>
+          field.dbObject(field.get(doc))
         case field: OptEmbeddingFieldBase =>
           val repr = field.get(doc)
           if (field.isNull(repr))
             null
           else
             field.dbObject(repr)
-        case field: EmbeddingFieldBase =>
-          field.dbObject(field.get(doc))
         case field: ElementsArrayFieldBase =>
           asIterable(
             field.iterator(field.get(doc)).
@@ -1122,6 +1136,10 @@ trait Document { document =>
           case field: BasicFieldBase =>
             doc = field.set(doc, field.fromBson(Bson.fromRaw(value).
                                    asInstanceOf[field.Bson]))
+          case field: MandatoryEmbeddingFieldBase =>
+            val dbo = field.dbObject(field.create)
+            dbo.putAll(value.asInstanceOf[DBObject])
+            doc = field.set(doc, dbo.repr)
           case field: OptEmbeddingFieldBase =>
             val repr = if (value == null)
                          field.nullDocRepr
@@ -1131,10 +1149,6 @@ trait Document { document =>
                          dbo.repr
                        }
             doc = field.set(doc, repr)
-          case field: EmbeddingFieldBase =>
-            val dbo = field.dbObject(field.create)
-            dbo.putAll(value.asInstanceOf[DBObject])
-            doc = field.set(doc, dbo.repr)
           case field: ElementsArrayFieldBase =>
             var es = field.newArrayRepr
             val it: Iterator[AnyRef] = value match {
