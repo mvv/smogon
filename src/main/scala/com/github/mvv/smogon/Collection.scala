@@ -1094,6 +1094,12 @@ trait Document { document =>
             null
           else
             Bson.toRaw(bson)
+        case field: OptEmbeddingFieldBase =>
+          val repr = field.get(doc)
+          if (field.isNull(repr))
+            null
+          else
+            field.dbObject(repr)
         case field: EmbeddingFieldBase =>
           field.dbObject(field.get(doc))
         case field: ElementsArrayFieldBase =>
@@ -1116,6 +1122,15 @@ trait Document { document =>
           case field: BasicFieldBase =>
             doc = field.set(doc, field.fromBson(Bson.fromRaw(value).
                                    asInstanceOf[field.Bson]))
+          case field: OptEmbeddingFieldBase =>
+            val repr = if (value == null)
+                         field.nullDocRepr
+                       else {
+                         val dbo = field.dbObject(field.create)
+                         dbo.putAll(value.asInstanceOf[DBObject])
+                         dbo.repr
+                       }
+            doc = field.set(doc, repr)
           case field: EmbeddingFieldBase =>
             val dbo = field.dbObject(field.create)
             dbo.putAll(value.asInstanceOf[DBObject])
