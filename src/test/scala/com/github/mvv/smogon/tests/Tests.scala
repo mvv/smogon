@@ -121,6 +121,12 @@ class SimpleTest extends SpecificationWithJUnit {
   "Quering an embedded primitives array field must succeed" in {
     MyCollection(m => m.elems.contains(_.in(5, 20))).
       findOneIn(dbc).isDefined must_== true
+    MyCollection(m => m.elems.containsAll(10, 20)).
+      findOneIn(dbc).isDefined must_== true
+    MyCollection(m => m.elems.containsAll(20, 30)).
+      findOneIn(dbc).isDefined must_== true
+    MyCollection(m => m.elems.containsAll(40, 30)).
+      findOneIn(dbc).isDefined must_== false
   }
 
   "Quering an embedded documents array field must succeed" in {

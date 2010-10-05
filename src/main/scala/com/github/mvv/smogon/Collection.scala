@@ -370,6 +370,12 @@ trait Document { document =>
       BsonArray(iterator(value).map(elementBson(_)).toSeq: _*)
 
     final def size(n: Long) = Filter.Size[Doc, this.type](this, n)
+    final def containsAll(
+                elems: Set[ElemRepr]): Filter.ContainsAll[Doc, this.type] =
+      Filter.ContainsAll[Doc, this.type](this, elems)
+    final def containsAll(
+                elems: ElemRepr*): Filter.ContainsAll[Doc, this.type] =
+      containsAll(elems.toSet)
 
     final def pushBack(elems: ElemRepr*) =
       Update.Push[Doc, this.type](this, elems)

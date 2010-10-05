@@ -506,6 +506,13 @@ object Filter {
     override def operatorName = Some("$size")
     def valueBson = size
   }
+  final case class ContainsAll[D <: Document, F <: D#ArrayFieldBase](
+                     field: F, elems: Set[F#ElemRepr]) extends Simple[D, F] {
+    override def operatorName = Some("$all")
+    def valueBson =
+      BsonArray(elems.asInstanceOf[Set[field.ElemRepr]].
+                  iterator.map(field.elementBson(_)))
+  }
   final case class ContainsElem[D <: Document, F <: D#ElementsArrayFieldBase](
                      field: F, filter: ValueFilter[F]) extends Simple[D, F] {
     override def operatorName = filter match {
