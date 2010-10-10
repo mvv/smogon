@@ -431,6 +431,21 @@ trait Document { document =>
     def iterator(repr: Repr): Iterator[ElemRepr] = repr.valuesIterator
   }
 
+  trait PairsArrayField[M[K, V] <: Map[K, V] with MapLike[K, V, M[K, V]]]
+        extends AbstractField with ArrayFieldBase {
+    type Key
+    type Value
+    type ElemRepr >: (Key, Value) <: (Key, Value)
+    type Repr >: M[Key, Value] <: Map[Key, Value]
+
+    protected val mapFactory: MapFactory[M]
+
+    def newArrayRepr(): Repr = mapFactory.empty[Key, Value]
+    def append(repr: Repr, value: ElemRepr): Repr =
+      ((mapFactory.newBuilder[Key, Value] ++= repr) += value).result
+    def iterator(repr: Repr): Iterator[ElemRepr] = repr.iterator
+  }
+
   trait SortedSetArrayField[S[X] <: SortedSet[X] with SortedSetLike[X, S[X]]]
         extends AbstractField with ArrayFieldBase {
     type Repr >: S[ElemRepr] <: SortedSet[ElemRepr]
@@ -1095,6 +1110,39 @@ trait Document { document =>
                     with DefaultReprDocument {
     final type Key = K
     final type Repr = C[K, DocRepr] 
+  }
+
+  abstract class DocumentsPairsMapField[K, V, C[_, _]](
+                   getter: DocRepr => C[K, V],
+                   setter: (DocRepr, C[K, V]) => DocRepr,
+                   name: String = null)
+                 extends Field(getter, setter, name)
+                    with DocumentsArrayFieldBase {
+    final type DocRepr = (K, V)
+    final type Key = K
+    final type Value = V
+  }
+
+  abstract class DocumentsPairsMapFieldM[K, V, C[_, _]](
+                   getter: DocRepr => C[K, V],
+                   setter: (DocRepr, C[K, V]) => Unit,
+                   name: String = null)
+                 extends FieldM(getter, setter, name)
+                    with DocumentsArrayFieldBase {
+    final type DocRepr = (K, V)
+    final type Key = K
+    final type Value = V
+  }
+
+  abstract class DocumentsPairsMapFieldD[K, V, C[_, _]](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with DocumentsArrayFieldBase {
+    final type DocRepr = (K, V)
+    final type Key = K
+    final type Value = V
+    final type Repr = C[K, V] 
   }
 
   final def toBson(value: DocRepr): BsonObject =
