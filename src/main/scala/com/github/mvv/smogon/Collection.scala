@@ -109,7 +109,7 @@ object Sort {
 }
 
 object Document {
-  val objectNamePat = ".*\\$([a-zA-Z_][a-zA-Z0-9_]*)\\$".r.pattern
+  val ObjectNameR = ".*\\$([a-zA-Z_][a-zA-Z0-9_]*)\\$".r
 }
 
 object Field {
@@ -142,8 +142,6 @@ object DocumentsArrayField {
 }
 
 trait Document { document =>
-  import Document._
-
   type Coll <: Collection
   type Root <: Documents
   type DocRepr
@@ -213,14 +211,13 @@ trait Document { document =>
 
   sealed abstract class AbstractField(name: String) extends FieldBase {
     final val fieldName = name match {
-      case null =>
-        val m = objectNamePat.matcher(getClass.getSimpleName)
-        val n = if (m.matches)
-                  m.group(1)
-                else
-                  throw new IllegalArgumentException
-        if (n == "id" && document.isInstanceOf[Collection]) "_id" else n
-      case fn => fn
+      case null => getClass.getSimpleName match {
+        case Document.ObjectNameR(name) =>
+          if (name == "id" && document.isInstanceOf[Collection]) "_id" else name
+        case _ =>
+          throw new IllegalArgumentException
+      }
+      case _ => name
     }
     final val fieldRootName = document match {
       case _: Documents => fieldName
