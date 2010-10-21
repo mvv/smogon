@@ -684,19 +684,22 @@ final class Query[C <: Collection] private(
 
   private def reprFromBson(obj: DBObject): C#DocRepr = {
     val repr = coll.create
-    coll.dbObject(repr).putAll(obj)
+    coll.toDBObject(repr).putAll(obj)
     repr
   }
 
   def only[CC >: C <: Collection](
         proj: CC => Projection[c.type] forSome { val c: CC }) =
-    new Query[C](coll, queryBson, sortBson, proj(coll).projectionBson(true))
+    new Query[C](coll, queryBson, sortBson,
+                 new BsonDBObject(proj(coll).projectionBson(true)))
   def except[CC >: C <: Collection](
         proj: CC => Projection[c.type] forSome { val c: CC }) =
-    new Query[C](coll, queryBson, sortBson, proj(coll).projectionBson(false))
+    new Query[C](coll, queryBson, sortBson,
+                 new BsonDBObject(proj(coll).projectionBson(false)))
   def sort[CC >: C <: Collection](
         sort: CC => Sort[c.type] forSome { val c: CC }) =
-    new Query[C](coll, queryBson, sort(coll).sortBson, projectionBson)
+    new Query[C](coll, queryBson, new BsonDBObject(sort(coll).sortBson),
+                 projectionBson)
 
   def findIn(dbc: DBCollection,
              skip: Int = 0, limit: Int = -1): Iterator[C#DocRepr] = {
@@ -861,7 +864,7 @@ final class Query[C <: Collection] private(
       } else {
         if (logger.isTraceEnabled) {
           val cs = safetyOf(dbc, safety)
-          val dbo = coll.dbObject(doc.asInstanceOf[coll.DocRepr])
+          val dbo = coll.toDBObject(doc.asInstanceOf[coll.DocRepr])
           logger.trace(dbc.getName + ".replace(" + this + ", " + dbo +
                        "), upsert=false, safety=" + cs)
           logger.trace(dbc.getName + ".replace result is false")
@@ -872,7 +875,7 @@ final class Query[C <: Collection] private(
       val cs = safetyOf(dbc, safety)
       val collDoc = doc.asInstanceOf[coll.DocRepr]
       val dbo = if (upsert)
-                  coll.dbObject(collDoc)
+                  coll.toDBObject(collDoc)
                 else
                   Bson.toDBObject(coll.toBson(collDoc))
       if (logger.isTraceEnabled)

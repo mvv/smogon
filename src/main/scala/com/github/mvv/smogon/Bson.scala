@@ -19,6 +19,7 @@ package com.github.mvv.smogon
 import java.util.Date
 import java.util.regex.Pattern
 import scala.util.matching.Regex
+import scala.collection.JavaConversions._
 import org.bson.types.ObjectId
 import org.bson.BSONObject
 import com.mongodb.DBObject
@@ -26,40 +27,74 @@ import com.github.mvv.layson
 import layson.bson._
 import layson.json._
 
-object Bson {
-  import scala.collection.JavaConversions._
-
-  class BsonDBObject(obj: BsonObject) extends DBObject {
-    def get(key: String): AnyRef = obj.get(key) match {
-      case Some(v) => toRaw(v)
-      case None =>
-        if (key == "_transientFields")
-          Nil
-        else
-          throw new NoSuchElementException(key)
-    }
-    def put(key: String, value: AnyRef) =
-      throw new UnsupportedOperationException
-    def putAll(map: java.util.Map[_, _]) =
-      throw new UnsupportedOperationException
-    def putAll(dbo: BSONObject) =
-      throw new UnsupportedOperationException
-    def removeField(key: String) =
-      throw new UnsupportedOperationException
-    def keySet = obj.membersMap.keySet
-    def containsKey(key: String) = obj.get(key).isDefined
-    def containsField(key: String) = obj.get(key).isDefined
-    def toMap = obj.membersMap.map { case (k, v) => (k, toRaw(v)) }
-    def isPartialObject = false
-    def markAsPartialObject() {}
-    override def toString = com.mongodb.util.JSON.serialize(this)
+final class StaticDocumentBsonObject[D <: StaticDocument](
+              val docDef: D, docRepr: D#DocRepr) extends BsonObject {
+  private val doc = docRepr.asInstanceOf[docDef.DocRepr]
+  def get(key: String) = docDef.fieldsMap.get(key).map { field =>
+    field.fieldBson(field.get(doc))
   }
+  def iterator = docDef.staticFields.iterator.map { field =>
+    field.fieldName -> field.fieldBson(field.get(doc))
+  }
+  def members = docDef.staticFields.view.map { field =>
+    field.fieldName -> field.fieldBson(field.get(doc))
+  }
+  def membersMap = docDef.fieldsMap.mapValues { field =>
+    field.fieldBson(field.get(doc))
+  }
+}
 
-  class DBBsonObject(dbo: DBObject)
-        extends MapBsonObject(
-                  dbo.toMap.asInstanceOf[java.util.Map[String, AnyRef]].toMap.
-                    mapValues(fromRaw(_)))
+final class DynamicDocumentBsonObject[D <: DynamicDocument](
+              val docDef: D, docRepr: D#DocRepr) extends BsonObject {
+  private val doc = docRepr.asInstanceOf[docDef.DocRepr]
+  def get(key: String) = docDef.stringToName(key).flatMap { name =>
+    docDef.get(doc, name).map(v => docDef.field.fieldBson(v))
+  }
+  def iterator = docDef.fields(doc).map { case (n, v) =>
+    docDef.nameToString(n) -> docDef.field.fieldBson(v)
+  }
+  def members = docDef.fieldsSeq(doc).view.map { case (n, v) =>
+    docDef.nameToString(n) -> docDef.field.fieldBson(v)
+  }
+  def membersMap = {
+    val submap = docDef.fieldsMap(doc).mapValues { v =>
+      docDef.field.fieldBson(v)
+    }
+    new SuperMap[String, docDef.FieldName, BsonValue](
+          submap, docDef.nameToString(_), docDef.stringToName(_))
+  }
+}
 
+class BsonDBObject(obj: BsonObject) extends DBObject {
+  def get(key: String): AnyRef = obj.get(key) match {
+    case Some(v) => Bson.toRaw(v)
+    case None =>
+      if (key == "_transientFields") Nil
+      else throw new NoSuchElementException(key)
+  }
+  def put(key: String, value: AnyRef) =
+    throw new UnsupportedOperationException
+  def putAll(map: java.util.Map[_, _]) =
+    throw new UnsupportedOperationException
+  def putAll(dbo: BSONObject) =
+    throw new UnsupportedOperationException
+  def removeField(key: String) =
+    throw new UnsupportedOperationException
+  def keySet = obj.membersMap.keySet
+  def containsKey(key: String) = obj.get(key).isDefined
+  def containsField(key: String) = obj.get(key).isDefined
+  def toMap = obj.membersMap.map { case (k, v) => (k, Bson.toRaw(v)) }
+  def isPartialObject = false
+  def markAsPartialObject() {}
+  override def toString = com.mongodb.util.JSON.serialize(this)
+}
+
+class DBBsonObject(dbo: DBObject)
+      extends MapBsonObject(
+                dbo.toMap.asInstanceOf[java.util.Map[String, AnyRef]].toMap.
+                  mapValues(Bson.fromRaw(_)))
+
+object Bson {
   def default[T <: BsonValue : ClassManifest](): T = (classManifest[T].erasure match {
     case c if c == classOf[BsonBool] => BsonBool.False
     case c if c == classOf[BsonInt] => BsonInt.Zero
