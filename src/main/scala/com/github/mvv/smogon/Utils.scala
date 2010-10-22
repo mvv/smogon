@@ -5,40 +5,28 @@ import org.bson.BSONObject
 import com.mongodb.DBObject
 
 final class KeySet[K] private (
-              map: Map[K, _], added: Set[K], removed: Set[K])
+              map: Map[K, _], extra: Set[K])
             extends Set[K] with SetLike[K, KeySet[K]] {
-  def this(map: Map[K, _]) = this(map, Set.empty, Set.empty)
+  def this(map: Map[K, _]) = this(map, Set.empty)
 
-  override def empty = new KeySet[K](Map.empty, Set.empty, Set.empty)
-  def contains(elem: K) = added(elem) || (!removed(elem) && map.contains(elem))
-  def iterator = added.iterator ++ map.keysIterator.filterNot(removed(_))
-  override def size = map.size + added.size - removed.size
+  override def empty = new KeySet[K](Map.empty, Set.empty)
+  def contains(elem: K) = extra(elem) || map.contains(elem)
+  def iterator = extra.iterator ++ map.keysIterator
+  override def size = map.size + extra.size
   def +(elem: K): KeySet[K] =
-    if (map.contains(elem)) {
-      if (removed(elem))
-        new KeySet(map, added, removed - elem)
-      else
-        this
-    } else {
-      if (added(elem))
-        this
-      else
-        new KeySet(map, added + elem, removed)
-    }
+    if (contains(elem))
+      this
+    else
+      new KeySet(map, extra + elem)
   override def ++(elems: TraversableOnce[K]): KeySet[K] =
     elems.foldLeft(this)(_ + _)
   def -(elem: K): KeySet[K] =
-    if (map.contains(elem)) {
-      if (removed(elem))
-        this
-      else
-        new KeySet(map, added, removed + elem)
-    } else {
-      if (added(elem))
-        new KeySet(map, added - elem, removed)
-      else
-        this
-    }
+    if (extra(elem))
+      new KeySet(map, extra - elem)
+    else if (map.contains(elem))
+      new KeySet(map - elem, extra)
+    else
+      this
   override def --(elems: TraversableOnce[K]): KeySet[K] = 
     elems.foldLeft(this)(_ - _)
 }
