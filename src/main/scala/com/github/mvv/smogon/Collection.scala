@@ -325,9 +325,7 @@ sealed trait Document { document =>
     final type DocRepr = Repr
 
     def default = create
-    def fieldBson(value: Repr): OptBsonObject =
-      BsonObject(
-        staticFields.map(f => f.fieldName -> f.fieldBson(f.get(value))).toMap)
+    def fieldBson(value: Repr): OptBsonObject
 
     final def enter[IO <: Direction](
                 spec: this.type => JsonSpec[d.type, IO]
@@ -371,8 +369,7 @@ sealed trait Document { document =>
 
   sealed trait MandatoryEmbeddingFieldBase
                extends EmbeddingFieldBase { self: AbstractField =>
-    final override def fieldBson(value: Repr): BsonObject =
-      super.fieldBson(value).asInstanceOf[BsonObject]
+    final def fieldBson(value: Repr): BsonObject = toBson(value)
     final def toRaw(value: Repr) = toDBObject(value)
     final def fromRaw(value: AnyRef) = {
       val dbo = toDBObject(default)
@@ -386,9 +383,9 @@ sealed trait Document { document =>
     def nullDocRepr: DocRepr
     def isNull(repr: DocRepr): Boolean
     override def default = nullDocRepr
-    final override def fieldBson(value: Repr): OptBsonObject =
+    final def fieldBson(value: Repr) =
       if (isNull(value)) BsonNull
-      else super.fieldBson(value)
+      else toBson(value)
     final def toRaw(value: Repr) =
       if (isNull(value)) null
       else toDBObject(value)
@@ -598,6 +595,44 @@ sealed trait Document { document =>
     }
   }
 
+  sealed trait DynamicFieldBase
+               extends FieldBase
+                  with DynamicDocument { self: AbstractField =>
+    final type Coll = document.Coll
+    final type Root = document.Root
+    final type DocRepr = Repr
+
+    def default = create
+    final def fieldBson(value: Repr): BsonObject = toBson(value)
+
+    final def toRaw(value: Repr): DBObject =
+      new DynamicDocumentDBObject[this.type](this, value)
+    final def fromRaw(value: AnyRef) = {
+      val dbo = toDBObject(default)
+      dbo.putAll(value.asInstanceOf[DBObject])
+      dbo.repr
+    }
+  }
+
+  trait MapDynamicField[M[K, V] <: Map[K, V] with MapLike[K, V, M[K, V]]]
+        extends DynamicFieldBase { self: AbstractField =>
+    type Repr >: M[FieldName, field.Repr] <: Map[FieldName, field.Repr]
+
+    protected val mapFactory: MapFactory[M]
+
+    protected final def newDocRepr = mapFactory.empty[FieldName, field.Repr]
+    final def get(doc: DocRepr, name: FieldName) = doc.get(name)
+    final def set(doc: DocRepr, name: FieldName, value: field.Repr) =
+      ((mapFactory.newBuilder[FieldName, field.Repr] ++= doc) +=
+       (name -> value)).result
+
+    final def containsField(doc: DocRepr, name: FieldName) = doc.contains(name)
+    final def fields(doc: DocRepr) = doc.iterator
+    final def fieldsSeq(doc: DocRepr) = doc.iterator.toStream
+    final def fieldsMap(doc: DocRepr) = doc
+    final def fieldsNamesSet(doc: DocRepr) = new KeySet(doc)
+  }
+
   def toBson(doc: DocRepr): BsonObject
   def toDBObject(doc: DocRepr): DocumentDBObject[document.type]
 
@@ -652,7 +687,8 @@ object StaticDocument {
   val ObjectNameRegex = ".*\\$([a-zA-Z_][a-zA-Z0-9_]*)\\$".r
 }
 
-sealed trait StaticDocument extends Document { document =>
+// TODO: Return the seal when Scala bug #3951 is fixed
+/*sealed*/ trait StaticDocument extends Document { document =>
   final type FieldName = String
 
   final def nameToString(name: String) = name
@@ -1246,7 +1282,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Repr = C[DocRepr] 
   }
 
-  abstract class DocumentsMapField[R, K, C[_, _]](
+  abstract class DocumentsMapArrayField[R, K, C[_, _]](
                    getter: DocRepr => C[K, R],
                    setter: (DocRepr, C[K, R]) => DocRepr,
                    name: String = null)
@@ -1256,7 +1292,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Key = K
   }
 
-  abstract class DocumentsMapFieldM[R, K, C[_, _]](
+  abstract class DocumentsMapArrayFieldM[R, K, C[_, _]](
                    getter: DocRepr => C[K, R],
                    setter: (DocRepr, C[K, R]) => Unit,
                    name: String = null)
@@ -1266,7 +1302,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Key = K
   }
 
-  abstract class DocumentsMapFieldD[R, K, C[_, _]](
+  abstract class DocumentsMapArrayFieldD[R, K, C[_, _]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
@@ -1276,7 +1312,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Repr = C[K, R] 
   }
 
-  abstract class DocumentsMapFieldDD[K, C[_, _]](
+  abstract class DocumentsMapArrayFieldDD[K, C[_, _]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
@@ -1286,7 +1322,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Repr = C[K, DocRepr] 
   }
 
-  abstract class DocumentsPairsMapField[K, V, C[_, _]](
+  abstract class DocumentsPairsArrayField[K, V, C[_, _]](
                    getter: DocRepr => C[K, V],
                    setter: (DocRepr, C[K, V]) => DocRepr,
                    name: String = null)
@@ -1297,7 +1333,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Value = V
   }
 
-  abstract class DocumentsPairsMapFieldM[K, V, C[_, _]](
+  abstract class DocumentsPairsArrayFieldM[K, V, C[_, _]](
                    getter: DocRepr => C[K, V],
                    setter: (DocRepr, C[K, V]) => Unit,
                    name: String = null)
@@ -1308,7 +1344,7 @@ sealed trait StaticDocument extends Document { document =>
     final type Value = V
   }
 
-  abstract class DocumentsPairsMapFieldD[K, V, C[_, _]](
+  abstract class DocumentsPairsArrayFieldD[K, V, C[_, _]](
                    name: String = null)(
                    implicit witness: DocRepr =:= DefaultDocRepr)
                  extends FieldD(name)
@@ -1317,6 +1353,44 @@ sealed trait StaticDocument extends Document { document =>
     final type Key = K
     final type Value = V
     final type Repr = C[K, V] 
+  }
+
+  abstract class AbstractDynamicField(name: String = null)
+                   extends AbstractField(name)
+                      with DynamicFieldBase
+
+  abstract class DynamicField[K, V, C[_, _]](
+                   getter: DocRepr => C[K, V],
+                   setter: (DocRepr, C[K, V]) => DocRepr,
+                   name: String = null)
+                 extends Field(getter, setter, name)
+                    with DynamicFieldBase {
+    final type FieldName = K
+
+    val field: AbstractField with AnyRef {
+                 type Repr = V
+               }
+  }
+
+  abstract class DynamicFieldM[K, V, C[_, _]](
+                   getter: DocRepr => C[K, V],
+                   setter: (DocRepr, C[K, V]) => Unit,
+                   name: String = null)
+                 extends FieldM(getter, setter, name)
+                    with DynamicFieldBase {
+    final type FieldName = K
+
+    val field: AbstractField with AnyRef {
+                 type Repr = V
+               }
+  }
+
+  abstract class DynamicFieldD[K](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with DynamicFieldBase {
+    final type FieldName = K
   }
 
   final def toBson(doc: DocRepr) =
@@ -1363,7 +1437,8 @@ final class DefaultDynamicDocRepr[D <: DynamicDocument](val docDef: D) {
   }
 }
 
-sealed trait DynamicDocument extends Document { document =>
+// TODO: Return the seal when Scala bug #3951 is fixed
+/*sealed*/ trait DynamicDocument extends Document { document =>
   def nameToString(name: FieldName) = name.toString
 
   final def staticFields = Vector.empty
@@ -1405,6 +1480,74 @@ sealed trait DynamicDocument extends Document { document =>
     f.fieldNameOpt = Some(name)
     f.asInstanceOf[field.type]
   }
+
+  abstract class AbstractBasicField extends AbstractField
+                                       with BasicFieldBase
+
+  abstract class BasicField[B <: BsonValue, R]()(
+                   implicit fromRepr: R => B, toRepr: B => R,
+                            bsonManifest: ClassManifest[B])
+                 extends AbstractField
+                    with BasicFieldBase {
+    final type Repr = R
+    final type Bson = B
+
+    final val bsonClass = bsonManifest.erasure.asInstanceOf[Class[B]]
+
+    final def fromBson(bson: B): R = toRepr(bson)
+    final def toBson(repr: R): B = fromRepr(repr)
+
+    def default = fromBson(Bson.default[B])
+  }
+
+  class BoolField[R]()(
+          implicit fromRepr: R => BsonBool, toRepr: BsonBool => R)
+        extends BasicField[BsonBool, R]
+  class OptBoolField[R]()(implicit fromRepr: R => OptBsonBool,
+                                   toRepr: OptBsonBool => R)
+        extends BasicField[OptBsonBool, R]
+
+  class IntField[R]()(
+          implicit fromRepr: R => BsonInt, toRepr: BsonInt => R)
+        extends BasicField[BsonInt, R]
+  class OptIntField[R]()(
+          implicit fromRepr: R => OptBsonInt, toRepr: OptBsonInt => R)
+        extends BasicField[OptBsonInt, R]
+
+  class LongField[R]()(
+          implicit fromRepr: R => BsonLong, toRepr: BsonLong => R)
+        extends BasicField[BsonLong, R]
+  class OptLongField[R]()(
+          implicit fromRepr: R => OptBsonLong, toRepr: OptBsonLong => R)
+        extends BasicField[OptBsonLong, R]
+
+  class DoubleField[R]()(
+          implicit fromRepr: R => BsonDouble, toRepr: BsonDouble => R)
+        extends BasicField[BsonDouble, R]
+  class OptDoubleField[R]()(
+          implicit fromRepr: R => OptBsonDouble, toRepr: OptBsonDouble => R)
+        extends BasicField[OptBsonDouble, R]
+
+  class StringField[R]()(
+          implicit fromRepr: R => BsonStr, toRepr: BsonStr => R)
+        extends BasicField[BsonStr, R]
+  class OptStringField[R]()(
+          implicit fromRepr: R => OptBsonStr, toRepr: OptBsonStr => R)
+        extends BasicField[OptBsonStr, R]
+
+  class DateField[R]()(
+          implicit fromRepr: R => BsonDate, toRepr: BsonDate => R)
+        extends BasicField[BsonDate, R]
+  class OptDateField[R]()(
+          implicit fromRepr: R => OptBsonDate, toRepr: OptBsonDate => R)
+        extends BasicField[OptBsonDate, R]
+
+  class IdField[R]()(
+          implicit fromRepr: R => BsonId, toRepr: BsonId => R)
+        extends BasicField[BsonId, R]
+  class OptIdField[R]()(
+          implicit fromRepr: R => OptBsonId, toRepr: OptBsonId => R)
+        extends BasicField[OptBsonId, R]
 
   final def toBson(doc: DocRepr) =
     new DynamicDocumentBsonObject[document.type](document, doc)
