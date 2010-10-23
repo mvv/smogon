@@ -167,7 +167,6 @@ sealed trait Document { document =>
   def staticFields: Seq[AbstractField]
   def fieldsNames(doc: DocRepr): Iterator[FieldName]
   def containsField(doc: DocRepr, name: FieldName): Boolean
-  def containsField(doc: DocRepr, name: String): Boolean
 
   protected def newDefaultDocRepr(): DefaultDocRepr
   protected def newDocRepr(): DocRepr
@@ -1443,8 +1442,6 @@ final class DefaultDynamicDocRepr[D <: DynamicDocument](val docDef: D) {
 
   final def staticFields = Vector.empty
   def fieldsNames(doc: DocRepr): Iterator[FieldName] = fields(doc).map(_._1)
-  final def containsField(doc: DocRepr, name: String): Boolean =
-    stringToName(name).map(n => containsField(doc, n)).getOrElse(false)
 
   final type DefaultDocRepr = DefaultDynamicDocRepr[document.type]
   protected final def newDefaultDocRepr =

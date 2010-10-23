@@ -110,7 +110,10 @@ sealed abstract class DocumentDBObject[D <: Document](
   def putAll(obj: BSONObject) =
     obj.keySet.foreach { k => put(k, obj.get(k)) }
   def removeField(key: String) = throw new UnsupportedOperationException
-  def containsField(key: String) = docDef.containsField(repr, key)
+  def containsField(key: String) =
+    docDef.stringToName(key).map { name =>
+      docDef.containsField(repr, name)
+    } .getOrElse(false)
   def containsKey(key: String) = containsField(key)
   def toMap = Map[AnyRef, AnyRef]()
   def isPartialObject = false
