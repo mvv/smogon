@@ -533,6 +533,13 @@ object Filter {
     override def operatorName = Some("$elemMatch")
     def valueBson = filter.normalForm.toBson
   }
+  final case class Exists[D <: Document, F <: D#DynamicFieldBase](
+                     field: F, name: F#FieldName, positive: Boolean)
+                   extends Simple[D, F] {
+    override def unary_!() = Exists[D, F](field, name, !positive)
+    override def operatorName = Some("$exists")
+    def valueBson = positive
+  }
 }
 
 sealed trait Update[-R <: Documents] {

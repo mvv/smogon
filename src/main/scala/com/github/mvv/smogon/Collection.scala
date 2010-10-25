@@ -604,6 +604,9 @@ sealed trait Document { document =>
     def default = create
     final def fieldBson(value: Repr): BsonObject = toBson(value)
 
+    final def exists(name: FieldName) =
+      Filter.Exists[Doc, this.type](this, name, true)
+
     final def toRaw(value: Repr): DBObject =
       new DynamicDocumentDBObject[this.type](this, value)
     final def fromRaw(value: AnyRef) = {
