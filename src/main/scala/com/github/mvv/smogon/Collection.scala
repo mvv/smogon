@@ -1476,7 +1476,8 @@ final class DefaultDynamicDocRepr[D <: DynamicDocument](val docDef: D) {
   final def create = newDocRepr
 
   final def apply(name: FieldName): field.type = {
-    val f = field.getClass.newInstance.asInstanceOf[AbstractField]
+    val c = field.getClass.getConstructor(getClass)
+    val f = c.newInstance(this).asInstanceOf[AbstractField]
     f.fieldNameOpt = Some(name)
     f.asInstanceOf[field.type]
   }
