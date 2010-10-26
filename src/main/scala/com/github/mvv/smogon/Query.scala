@@ -507,14 +507,16 @@ object Filter {
     def valueBson = size
   }
   final case class ContainsAll[D <: Document, F <: D#ArrayFieldBase](
-                     field: F, elems: Set[F#ElemRepr]) extends Simple[D, F] {
+                     field: F, elems: Set[F#ElemRepr])
+                   extends Simple[D, F] {
     override def operatorName = Some("$all")
     def valueBson =
       BsonArray(elems.asInstanceOf[Set[field.ElemRepr]].
                   iterator.map(field.elementBson(_)))
   }
   final case class ContainsElem[D <: Document, F <: D#ElementsArrayFieldBase](
-                     field: F, filter: ValueFilter[F]) extends Simple[D, F] {
+                     field: F, filter: ValueFilter[F])
+                   extends Simple[D, F] {
     override def operatorName = filter match {
       case s: ValueFilter.Simple[_] => s.operatorName
       case _ => throw UntranslatableQueryException(this)
@@ -529,16 +531,19 @@ object Filter {
     }
   }
   final case class Contains[D <: Document, F <: D#DocumentsArrayFieldBase](
-                     field: F, filter: Filter[F]) extends Simple[D, F] {
+                     field: F, filter: Filter[F])
+                   extends Simple[D, F] {
     override def operatorName = Some("$elemMatch")
     def valueBson = filter.normalForm.toBson
   }
   final case class Exists[D <: Document, F <: D#DynamicFieldBase](
                      field: F, name: F#FieldName, positive: Boolean)
-                   extends Simple[D, F] {
-    override def unary_!() = Exists[D, F](field, name, !positive)
-    override def operatorName = Some("$exists")
-    def valueBson = positive
+                   extends NonEmptyFilter[D#Root] {
+    def unary_!() = Exists[D, F](field, name, !positive)
+    def toBson =
+      BsonObject((field.fieldRootName + '.' +
+                  field.nameToString(name.asInstanceOf[field.FieldName])) ->
+                   BsonObject("$exists" -> positive))
   }
 }
 
