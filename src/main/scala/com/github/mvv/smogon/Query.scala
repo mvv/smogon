@@ -237,8 +237,9 @@ object Filter {
 
     final def onlyIf(flag: Boolean): Filter[R] = if (flag) this else EmptyFilter
   }
-  sealed trait Simple[D <: Document, F <: D#FieldBase]
-               extends NonEmptyFilter[D#Root] {
+  sealed trait Single[-R <: Documents] extends NonEmptyFilter[R]
+  sealed trait Simple[D <: Document, +F <: D#FieldBase]
+               extends Single[D#Root] {
     val field: F
     def unary_!(): NonEmptyFilter[D#Root] = Not(this)
     def operatorName: Option[String] = None
@@ -289,10 +290,7 @@ object Filter {
     def toBson = {
       import And.Context
       val ctxs = linearize.foldLeft(Map[String, Context]()) { (m, elem) =>
-        val c = elem.asInstanceOf[Simple[D, F] forSome {
-                                    type D <: Document
-                                    type F <: D#FieldBase
-                                  }]
+        val c = elem.asInstanceOf[Single[R] forSome { type R <: Documents }]
         def combine(valueByOp: Map[String, BsonValue], op: String,
                     value: BsonValue): Map[String, BsonValue] = {
           valueByOp.get(op) match {
@@ -308,7 +306,7 @@ object Filter {
           case Some(ctx @ Context(eqTest, regexTest, notRegexTest,
                                   valueByOp, notValueByOp)) =>
             c match {
-              case Eq(_, _) =>
+              case c @ Eq(_, _) =>
                 val bson = c.valueBson
                 eqTest match {
                   case Some(value) =>
@@ -378,11 +376,11 @@ object Filter {
                       ctx.copy(notRegexTest = Some(r))
                   }
                 }
-              case Not(filter) if c.operatorName == Some("$not") =>
+              case c @ Not(filter) if c.operatorName == Some("$not") =>
                 val (op, value) = filter.condition.right.get
                 ctx.copy(notValueByOp = combine(valueByOp, op, value))
               case c =>
-                val (op, value) = c.condition.right.get
+                val (op, value) = v.asInstanceOf[BsonObject].members.head
                 ctx.copy(valueByOp = combine(valueByOp, op, value))
             }
           case None =>
@@ -397,7 +395,7 @@ object Filter {
                  Context(None, None, Some(r), Map(), Map())
                case Not(ContainsElem(_, ValueFilter.Match(_, r))) =>
                  Context(None, Some(r), None, Map(), Map())
-               case Not(filter) if c.operatorName == Some("$not") =>
+               case c @ Not(filter) if c.operatorName == Some("$not") =>
                  val (op, value) = filter.condition.right.get
                  Context(None, None, None, Map(), Map(op -> value))
                case c =>
@@ -538,7 +536,7 @@ object Filter {
   }
   final case class Exists[D <: Document, F <: D#DynamicFieldBase](
                      field: F, name: F#FieldName, positive: Boolean)
-                   extends NonEmptyFilter[D#Root] {
+                   extends Single[D#Root] {
     def unary_!() = Exists[D, F](field, name, !positive)
     def toBson =
       BsonObject((field.fieldRootName + '.' +
