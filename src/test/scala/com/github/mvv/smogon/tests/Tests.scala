@@ -38,7 +38,13 @@ class MyCollection extends DefaultReprCollection {
     object docField extends IntFieldD[Int]
     docField
   }
-  id | field | opt | embedded | elems | docs
+  object dyn extends DynamicFieldDD[String] {
+    def stringToName(str: String) = Some(str)
+
+    object field extends IntField[Int]
+    field
+  }
+  id | field | opt | embedded | elems | docs | dyn
 }
 
 object MyCollection extends MyCollection
@@ -72,7 +78,7 @@ class SimpleTest extends SpecificationWithJUnit {
   }
   
   "Number of fields must be correct" in {
-    MyCollection.fields.size must_== 6
+    MyCollection.fields.size must_== 7
   }
 
   "Setting default safety level must actually set it" in {
@@ -152,5 +158,14 @@ class SimpleTest extends SpecificationWithJUnit {
     MyCollection.field.get(my) must_== 2
     MyCollection.embedded.innerField.
       get(MyCollection.embedded.get(my)) must_== 2.0
+  }
+
+  "Setting dynamic field must work" in {
+    val updated = MyCollection(_.field === 2).updateOneIn(dbc, { m =>
+      m.dyn("test") =# 10
+    })
+    updated must_== true
+    val my = MyCollection(_.field === 2).findOneIn(dbc).get
+    MyCollection.dyn.get(MyCollection.dyn.get(my), "test") must_== Some(10)
   }
 }

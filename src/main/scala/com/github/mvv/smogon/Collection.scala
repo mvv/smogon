@@ -1395,6 +1395,27 @@ object StaticDocument {
     final type FieldName = K
   }
 
+  abstract class DynamicFieldDD[K](
+                   name: String = null)(
+                   implicit witness: DocRepr =:= DefaultDocRepr)
+                 extends FieldD(name)
+                    with DynamicFieldBase { self =>
+    final type FieldName = K
+    final type Repr = DefaultDocRepr
+    final protected def newDocRepr = newDefaultDocRepr
+
+    final def containsField(doc: DefaultDocRepr, name: FieldName) =
+      doc.fields.contains(name)
+    final def fields(doc: DefaultDocRepr) = doc.fields.iterator
+    final def fieldsSeq(doc: DefaultDocRepr) = doc.fields.iterator.toStream
+    final def fieldsMap(doc: DefaultDocRepr) = doc.fields
+    final def fieldsNamesSet(doc: DefaultDocRepr) = new KeySet(doc.fields)
+
+    final def get(doc: DefaultDocRepr, name: K) = doc.get(name)
+    final def set(doc: DefaultDocRepr, name: K, value: field.Repr) =
+      doc.set(name, value)
+  }
+
   final def toBson(doc: DocRepr) =
     new StaticDocumentBsonObject[document.type](document, doc)
   final def toDBObject(doc: DocRepr) =
@@ -1429,12 +1450,13 @@ object StaticDocument {
 }
 
 final class DefaultDynamicDocRepr[D <: DynamicDocument](val docDef: D) {
-  private val fields =
-    new scala.collection.mutable.HashMap[docDef.FieldName, docDef.field.Repr]
+  private var map = Map[docDef.FieldName, docDef.field.Repr]()
 
-  def get(name: docDef.FieldName): Option[docDef.field.Repr] = fields.get(name)
+  def fields = map
+
+  def get(name: docDef.FieldName): Option[docDef.field.Repr] = map.get(name)
   def set(name: docDef.FieldName, value: docDef.field.Repr) = {
-    fields.update(name, value)
+    map += (name -> value)
     this.asInstanceOf[docDef.DocRepr]
   }
 }
