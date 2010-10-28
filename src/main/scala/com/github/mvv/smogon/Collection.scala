@@ -192,8 +192,8 @@ sealed trait Document { document =>
     final type Doc = document.type
     type Repr
 
-    final lazy val fieldRootName = fieldRootNamePrefix + fieldName 
-    final lazy val fieldFullName = fieldFullNamePrefix + fieldName 
+    final lazy val fieldRootName = fieldRootNamePrefix + fieldNameString 
+    final lazy val fieldFullName = fieldFullNamePrefix + fieldNameString
     final def fieldDocument: Doc = document
     final def fieldsSet = Set(this)
 
@@ -263,7 +263,7 @@ sealed trait Document { document =>
 
     final def toRaw(value: Repr) = {
       val bson = toBson(value)
-      if (fieldName == "_id" && bson == BsonId.Zero && isCollection)
+      if (fieldNameString == "_id" && bson == BsonId.Zero && isCollection)
         null
       else
         Bson.toRaw(bson)
@@ -1063,8 +1063,8 @@ object StaticDocument {
     final def nullDocRepr = null
   }
 
-  abstract class AbstractElementsArrayField(fieldName: String = null)
-                   extends AbstractField(fieldName)
+  abstract class AbstractElementsArrayField(name: String = null)
+                   extends AbstractField(name)
                       with ElementsArrayFieldBase
 
   abstract class ElementsArrayField[B <: BsonValue, R, C[X]](
