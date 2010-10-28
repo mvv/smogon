@@ -391,7 +391,7 @@ sealed trait Document { document =>
     final def fromRaw(value: AnyRef) = {
       if (value == null) nullDocRepr
       else {
-        val dbo = toDBObject(default)
+        val dbo = toDBObject(create)
         dbo.putAll(value.asInstanceOf[DBObject])
         dbo.repr
       }
