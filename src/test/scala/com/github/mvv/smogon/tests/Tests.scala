@@ -148,7 +148,7 @@ class SimpleTest extends SpecificationWithJUnit {
     MyCollection(_.field === 1).findOneIn(dbc).isDefined must_== true
   }
 
-  "FindAndUpdate must return document with upsert" in {
+  "FindAndUpdate(upsert, returnUpdated) must return created document" in {
     val myOpt = MyCollection(m => m.field === 2).findAndUpdateIn(dbc, { m =>
       m.field =# 2 &&
       (m.embedded.innerField += 2.0)
@@ -158,6 +158,17 @@ class SimpleTest extends SpecificationWithJUnit {
     MyCollection.field.get(my) must_== 2
     MyCollection.embedded.innerField.
       get(MyCollection.embedded.get(my)) must_== 2.0
+  }
+
+  ("FindAndUpdate(upsert, !returnUpdated) " +
+   "on nonexistent document must return None") in {
+    val id = Collection.genId()
+    MyCollection(_.id === id).findAndUpdateIn(dbc, { m =>
+      m.field =# 3 &&
+      (m.embedded.innerField += 2.0)
+    }, upsert = true).isEmpty must_== true
+    MyCollection(m => m.id === id && m.field === 3).
+      findOneIn(dbc).isDefined must_== true
   }
 
   "Setting dynamic field must work" in {

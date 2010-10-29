@@ -847,7 +847,7 @@ final class Query[C <: Collection] private(
                                     false, updateBson, returnUpdated, upsert)
       if (logger.isTraceEnabled)
         logger.trace(dbc.getName + ".findAndUpdate result is " + dbo)
-      if (dbo == null)
+      if (dbo == null || (upsert && !returnUpdated && dbo.keySet.isEmpty))
         None
       else
         Some(reprFromBson(dbo))
