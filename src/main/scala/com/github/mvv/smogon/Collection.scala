@@ -530,7 +530,7 @@ sealed trait Document { document =>
         this, filter(new ValueFilterBuilder[this.type](this)))
 
     final def toRaw(value: Repr) =
-      scala.collection.JavaConversions.asIterable(
+      scala.collection.JavaConversions.asJavaIterable(
         iterator(value).map(e => Bson.toRaw(toBson(e))).toStream)
     final def fromRaw(value: AnyRef) = {
       import scala.collection.JavaConversions._
@@ -574,7 +574,7 @@ sealed trait Document { document =>
       new JsonSpec.Transformed[Doc, this.type](jsonMember, this, trans)
 
     final def toRaw(value: Repr) =
-      scala.collection.JavaConversions.asIterable(
+      scala.collection.JavaConversions.asJavaIterable(
         iterator(value).map(e => toDBObject(e)).toStream)
     final def fromRaw(value: AnyRef) = {
       import scala.collection.JavaConversions._

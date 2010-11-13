@@ -719,7 +719,7 @@ final class Query[C <: Collection] private(
     if (limit == 0 || queryBson == null)
       Iterator.empty
     else
-      asIterator {
+      asScalaIterator {
         dbc.find(queryBson, projectionBson, skip, if (limit > 0) -limit else 0).
           sort(sortBson)
       } .map(reprFromBson(_))

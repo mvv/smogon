@@ -139,7 +139,7 @@ object Bson {
     case BsonId(time, machine, increment) =>
       new ObjectId(time, machine, increment)
     case BsonRegex(x) => x.pattern
-    case BsonArray(x) => asIterable(x.map(toRaw)) 
+    case BsonArray(x) => asJavaIterable(x.map(toRaw)) 
     case x: BsonObject => toDBObject(x)
     case _ => null
   }
