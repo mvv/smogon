@@ -560,9 +560,14 @@ sealed trait Document { document =>
 
     final def contains(filter: this.type => Filter[d.type] forSome {
                                  val d: this.type
-                               }): Filter[Doc#Root] =
+                               }) =
       Filter.Contains[Doc, this.type](
-        this, filter(this).asInstanceOf[Filter[this.type]])
+        this, Seq(filter(this).asInstanceOf[Filter[this.type]]))
+    final def containsAll(filters: this.type => Seq[Filter[d.type]] forSome {
+                                     val d: this.type
+                                   }) =
+      Filter.Contains[Doc, this.type](
+        this, filters(this).asInstanceOf[Seq[Filter[this.type]]])
 
     final def foreach[IO <: Direction](
                 spec: this.type => JsonSpec[d.type, IO]

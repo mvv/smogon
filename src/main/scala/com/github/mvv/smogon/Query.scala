@@ -529,10 +529,18 @@ object Filter {
     }
   }
   final case class Contains[D <: Document, F <: D#DocumentsArrayFieldBase](
-                     field: F, filter: Filter[F])
+                     field: F, filters: Seq[Filter[F]])
                    extends Simple[D, F] {
-    override def operatorName = Some("$elemMatch")
-    def valueBson = filter.normalForm.toBson
+    override def operatorName = if (filters.size == 1)
+                                  Some("$elemMatch")
+                                else
+                                  Some("$all")
+    def valueBson = if (filters.size == 1)
+                      filters(0).normalForm.toBson
+                    else
+                      BsonArray(filters.map { f =>
+                          BsonObject("$elemMatch" -> f.normalForm.toBson)
+                        }: _*)
   }
   final case class Exists[D <: Document, F <: D#DynamicFieldBase](
                      field: F, name: F#FieldName, positive: Boolean)
