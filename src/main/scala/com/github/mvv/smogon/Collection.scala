@@ -651,6 +651,9 @@ sealed trait Document { document =>
                       forSome { val d: this.type }) =
     JsonSpec.InCustomEmbedding[this.type, IO](
                name, spec.asInstanceOf[JsonSpec.NotEmpty[this.type, IO]])
+  final def from(name: String)(
+                 conv: PartialFunction[(DocRepr, JsonValue), DocRepr]) =
+    JsonSpec.CustomFieldFrom[this.type](name, this, conv)
   final def putOpt(name: String)(conv: DocRepr => Option[JsonValue]) =
     JsonSpec.CustomFieldTo[this.type](name, this, conv)
   final def put(name: String)(conv: DocRepr => JsonValue) =

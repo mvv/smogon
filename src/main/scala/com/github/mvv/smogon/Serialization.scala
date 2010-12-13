@@ -189,14 +189,28 @@ object JsonSpec {
             field: F, name: String, conv: PartialFunction[JsonValue, F#Repr],
             value: JsonValue) = {
         val f = field.asInstanceOf[d.FieldBase]
-        val fullPath = path :+ name
         try {
           val r = conv(value).asInstanceOf[f.Repr]
           doc = f.set(doc, r)
           Vector.empty
         } catch {
+          case e: IllegalFieldsValuesException =>
+            e.errors
           case e: Exception =>
-            Vector(IllegalFieldValue(fullPath, value, e.getMessage))
+            Vector(IllegalFieldValue(path :+ name, value, e.getMessage))
+        }
+      }
+      def customField(name: String, value: JsonValue,
+                      conv: PartialFunction[(DD#DocRepr, JsonValue),
+                                            DD#DocRepr]) = {
+        try {
+          doc = conv(doc, value).asInstanceOf[d.DocRepr]
+          Vector.empty
+        } catch {
+          case e: IllegalFieldsValuesException =>
+            e.errors
+          case e: Exception =>
+            Vector(IllegalFieldValue(path :+ name, value, e.getMessage))
         }
       }
 
@@ -215,6 +229,8 @@ object JsonSpec {
                 throw new UnexpectedFieldException(path :+ name)
               case ConvFrom(name, field, conv) =>
                 errors ++= convField(field, name, conv, value)
+              case CustomFieldFrom(name, _, conv) =>
+                errors ++= customField(name, value, conv)
               case DocumentField(_, BasicField(field)) =>
                 errors ++= basicField(field, name, value)
               case DocumentField(_, EmbeddingField(field)) =>
