@@ -263,7 +263,7 @@ sealed trait Document { document =>
 
     final def toRaw(value: Repr) = {
       val bson = toBson(value)
-      if (fieldNameString == "_id" && bson == BsonId.Zero && isCollection)
+      if (isCollection && fieldNameString == "_id" && bson == BsonId.Zero)
         null
       else
         Bson.toRaw(bson)
