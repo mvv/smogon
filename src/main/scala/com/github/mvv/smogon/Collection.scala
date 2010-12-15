@@ -658,6 +658,8 @@ sealed trait Document { document =>
     JsonSpec.CustomFieldTo[this.type](name, this, conv)
   final def put(name: String)(conv: DocRepr => JsonValue) =
     putOpt(name)(d => Some(conv(d)))
+  final def put(name: String, value: JsonValue) =
+    putOpt(name)(_ => Some(value))
 
   final def fromJson(
               spec: this.type =>
