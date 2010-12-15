@@ -146,6 +146,11 @@ object DocumentsArrayField {
         x: D#DocumentsArrayFieldBase): Option[D#DocumentsArrayFieldBase] =
     Some(x)
 }
+object DynamicField {
+  def unapply[D <: Document](
+        x: D#DynamicFieldBase): Option[D#DynamicFieldBase] =
+    Some(x)
+}
 
 trait DefaultReprDocument { self: Document =>
   final type DocRepr = DefaultDocRepr

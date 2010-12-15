@@ -360,6 +360,16 @@ object JsonSpec {
             case DocumentsArrayField(field) =>
               val f = field.asInstanceOf[d.DocumentsArrayFieldBase]
               Some(JsonArray(f.iterator(f.get(dr)).map(f.toJson(_))))
+            case DynamicField(field) =>
+              val f = field.asInstanceOf[d.DynamicFieldBase]
+              val doc = f.get(dr)
+              Some {
+                JsonObject {
+                  f.fieldsNamesSet(doc).iterator.map { name =>
+                    f.toJson(_(name))(doc).members.head
+                  }
+                }
+              }
           }
           case InEmbedding(_, field, spec) =>
             if (field.isInstanceOf[d.OptEmbeddingFieldBase]) {
