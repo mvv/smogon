@@ -378,7 +378,7 @@ object Filter {
                 }
               case c @ Not(filter) if c.operatorName == Some("$not") =>
                 val (op, value) = filter.condition.right.get
-                ctx.copy(notValueByOp = combine(valueByOp, op, value))
+                ctx.copy(notValueByOp = combine(notValueByOp, op, value))
               case c =>
                 val (op, value) = v.asInstanceOf[BsonObject].members.head
                 ctx.copy(valueByOp = combine(valueByOp, op, value))
