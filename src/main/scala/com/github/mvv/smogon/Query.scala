@@ -507,10 +507,12 @@ object Filter {
   final case class ContainsAll[D <: Document, F <: D#ArrayFieldBase](
                      field: F, elems: Set[F#ElemRepr])
                    extends Simple[D, F] {
-    override def operatorName = Some("$all")
+    override def operatorName =
+      if (elems.isEmpty) Some("$exists") else Some("$all")
     def valueBson =
-      BsonArray(elems.asInstanceOf[Set[field.ElemRepr]].
-                  iterator.map(field.elementBson(_)))
+      if (elems.isEmpty) true
+      else BsonArray(elems.asInstanceOf[Set[field.ElemRepr]].
+                       iterator.map(field.elementBson(_)))
   }
   final case class ContainsElem[D <: Document, F <: D#ElementsArrayFieldBase](
                      field: F, filter: ValueFilter[F])
@@ -531,16 +533,20 @@ object Filter {
   final case class Contains[D <: Document, F <: D#DocumentsArrayFieldBase](
                      field: F, filters: Seq[Filter[F]])
                    extends Simple[D, F] {
-    override def operatorName = if (filters.size == 1)
-                                  Some("$elemMatch")
-                                else
-                                  Some("$all")
-    def valueBson = if (filters.size == 1)
-                      filters(0).normalForm.toBson
-                    else
-                      BsonArray(filters.map { f =>
-                          BsonObject("$elemMatch" -> f.normalForm.toBson)
-                        }: _*)
+    override def operatorName = Some {
+      filters.size match {
+        case 0 => "$exists"
+        case 1 => "$elemMatch"
+        case _ => "$all"
+      }
+    }
+    def valueBson = filters.size match {
+      case 0 => true
+      case 1 => filters(0).normalForm.toBson
+      case _ => BsonArray(filters.map { f =>
+                  BsonObject("$elemMatch" -> f.normalForm.toBson)
+                }: _*)
+    }
   }
   final case class Exists[D <: Document, F <: D#DynamicFieldBase](
                      field: F, name: F#FieldName, positive: Boolean)
