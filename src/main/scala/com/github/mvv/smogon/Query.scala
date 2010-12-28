@@ -294,9 +294,16 @@ object Filter {
         def combine(valueByOp: Map[String, BsonValue], op: String,
                     value: BsonValue): Map[String, BsonValue] = {
           valueByOp.get(op) match {
-            case Some(old) =>
-              // TODO: Actual combining
-              valueByOp
+            case Some(old) => op match {
+              case "$all" =>
+                val combined =
+                  BsonArray((old.asInstanceOf[BsonArray].elements ++
+                             value.asInstanceOf[BsonArray].elements): _*)
+                valueByOp + (op -> combined)
+              case _ =>
+                // TODO: Actual combining
+                valueByOp
+            }
             case None =>
               valueByOp + (op -> value)
           }
